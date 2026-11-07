@@ -57,3 +57,7 @@ APPIMAGETOOL=/path/to/appimagetool packaging/build_appimage.sh   # build the App
 ## How it works
 
 It uses Roku's [External Control Protocol](https://developer.roku.com/docs/developer-program/dev-tools/external-control-api.md): plain HTTP requests to port 8060 on the device. All of that lives in [`src/ecp.rs`](src/ecp.rs). The UI and a background network thread are in [`src/main.rs`](src/main.rs).
+
+## License
+
+[MIT](LICENSE)
