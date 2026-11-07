@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=Roku Remote
+Comment=Control a Roku TV or player over the local network
+Exec=roku-remote
+Icon=roku-remote
+Categories=AudioVideo;Utility;
+Terminal=false
+StartupWMClass=roku-remote
