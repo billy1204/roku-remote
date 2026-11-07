@@ -1,6 +1,6 @@
 # Roku Remote
 
-A small desktop remote for Roku TVs and streaming players on your home network, packaged as a Linux AppImage. Written in Rust with [egui](https://github.com/emilk/egui).
+A small desktop remote for Roku TVs and streaming players on your home network, for Linux (AppImage) and Windows (.exe). Written in Rust with [egui](https://github.com/emilk/egui).
 
 <img src="assets/icon.svg" width="64" alt="Roku Remote icon">
 
@@ -36,12 +36,16 @@ If a TV is still on Limited, the app tells you when you connect.
 
 ## Run it
 
-Download `Roku-Remote-x86_64.AppImage` (or build it, below), then:
+Download from the [latest release](https://github.com/billy1204/roku-remote/releases/latest), or build it yourself (below).
+
+**Linux:** download `Roku-Remote-x86_64.AppImage`, then:
 
 ```bash
 chmod +x Roku-Remote-x86_64.AppImage
 ./Roku-Remote-x86_64.AppImage
 ```
+
+**Windows:** download `Roku-Remote-windows-x86_64.exe` and double-click it. It's not code-signed, so Windows SmartScreen may warn you the first time; choose **More info > Run anyway**. If Windows Firewall asks, allow it on private networks so it can find your Rokus.
 
 Your computer and the Roku must be on the same network.
 
@@ -53,6 +57,8 @@ Requires a Rust toolchain (edition 2024) and [appimagetool](https://github.com/A
 cargo run --release                       # run directly
 APPIMAGETOOL=/path/to/appimagetool packaging/build_appimage.sh   # build the AppImage
 ```
+
+On Windows, `cargo build --release` produces `target\release\roku-remote.exe`. Publishing a GitHub release also builds the `.exe` and attaches it automatically ([workflow](.github/workflows/windows.yml)).
 
 ## How it works
 

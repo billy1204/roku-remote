@@ -1,3 +1,5 @@
+// No console window behind the remote on Windows.
+#![cfg_attr(windows, windows_subsystem = "windows")]
 mod ecp;
 
 use eframe::egui;
@@ -46,6 +48,9 @@ fn spawn_worker(ctx: egui::Context) -> (Sender<Cmd>, Receiver<Event>) {
 }
 
 fn config_path() -> Option<PathBuf> {
+    #[cfg(windows)]
+    let base = PathBuf::from(std::env::var_os("APPDATA")?);
+    #[cfg(not(windows))]
     let base = std::env::var_os("XDG_CONFIG_HOME")
         .map(PathBuf::from)
         .or_else(|| std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".config")))?;
