@@ -30,6 +30,10 @@ fn addr(host: &str) -> Result<SocketAddr, String> {
 }
 
 fn request(host: &str, method: &str, path: &str) -> Result<String, String> {
+    request_bytes(host, method, path).map(|b| String::from_utf8_lossy(&b).into_owned())
+}
+
+fn request_bytes(host: &str, method: &str, path: &str) -> Result<Vec<u8>, String> {
     let sock = addr(host)?;
     let mut stream = TcpStream::connect_timeout(&sock, TIMEOUT).map_err(|e| format!("{host}: {e}"))?;
     stream.set_read_timeout(Some(TIMEOUT)).ok();
@@ -40,10 +44,14 @@ fn request(host: &str, method: &str, path: &str) -> Result<String, String> {
     stream.write_all(req.as_bytes()).map_err(|e| e.to_string())?;
     let mut buf = Vec::new();
     stream.read_to_end(&mut buf).map_err(|e| e.to_string())?;
-    let text = String::from_utf8_lossy(&buf).into_owned();
-    let status: u16 = text.split_whitespace().nth(1).and_then(|s| s.parse().ok()).unwrap_or(0);
+    let head_end = buf.windows(4).position(|w| w == b"\r\n\r\n");
+    let head = String::from_utf8_lossy(&buf[..head_end.unwrap_or(buf.len())]);
+    let status: u16 = head.split_whitespace().nth(1).and_then(|s| s.parse().ok()).unwrap_or(0);
+    if head.to_ascii_lowercase().contains("transfer-encoding: chunked") {
+        return Err(format!("{host}: chunked responses are not supported"));
+    }
     match status {
-        200..=299 => Ok(text.split_once("\r\n\r\n").map(|(_, b)| b.to_string()).unwrap_or_default()),
+        200..=299 => Ok(head_end.map(|i| buf[i + 4..].to_vec()).unwrap_or_default()),
         403 => Err("TV refused the command. On the TV, set Settings > System > Advanced system \
                     settings > Control by mobile apps to Enabled."
             .into()),
@@ -68,6 +76,11 @@ pub fn type_text(host: &str, text: &str) -> Result<(), String> {
 
 pub fn launch(host: &str, id: &str) -> Result<(), String> {
     request(host, "POST", &format!("/launch/{id}")).map(drop)
+}
+
+/// A channel's logo (PNG or JPEG).
+pub fn icon(host: &str, id: &str) -> Result<Vec<u8>, String> {
+    request_bytes(host, "GET", &format!("/query/icon/{id}"))
 }
 
 fn tag<'a>(xml: &'a str, name: &str) -> Option<&'a str> {
