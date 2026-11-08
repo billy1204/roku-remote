@@ -78,7 +78,7 @@ pub fn launch(host: &str, id: &str) -> Result<(), String> {
     request(host, "POST", &format!("/launch/{id}")).map(drop)
 }
 
-/// A channel's logo (PNG or JPEG).
+/// A channel's logo (WebP, PNG or JPEG).
 pub fn icon(host: &str, id: &str) -> Result<Vec<u8>, String> {
     request_bytes(host, "GET", &format!("/query/icon/{id}"))
 }
@@ -148,4 +148,56 @@ pub fn discover() -> Vec<Device> {
         }
     }
     hosts.iter().map(|h| device_info(h).unwrap_or(Device { host: h.clone(), name: h.clone(), is_tv: false, limited: false })).collect()
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub enum State {
+    #[default]
+    Stopped,
+    Playing,
+    Paused,
+}
+
+/// What the TV is showing: the open channel and, when a video is loaded,
+/// its playback state and progress.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct Playing {
+    pub app_id: String,
+    pub app: String,
+    pub state: State,
+    pub position_ms: u64,
+    pub duration_ms: u64,
+}
+
+fn millis(xml: &str, name: &str) -> u64 {
+    tag(xml, name).and_then(|v| v.trim().trim_end_matches("ms").trim().parse().ok()).unwrap_or(0)
+}
+
+pub fn now_playing(host: &str) -> Result<Playing, String> {
+    let xml = request(host, "GET", "/query/active-app")?;
+    let app = xml.split("<app").nth(1).unwrap_or_default();
+    let app_id = app.split("id=\"").nth(1).and_then(|s| s.split('"').next()).unwrap_or_default();
+    let name = app.split_once('>').and_then(|(_, r)| r.split("</app>").next()).map(unescape).unwrap_or_default();
+    let mut now = Playing {
+        app_id: app_id.to_string(),
+        // With no channel open the TV reports just "Roku".
+        app: if app_id.is_empty() { "Home".into() } else { name },
+        ..Default::default()
+    };
+    // Media state is refused in Limited mode; the channel name still shows.
+    if !app_id.is_empty()
+        && let Ok(xml) = request(host, "GET", "/query/media-player")
+    {
+        let state = xml.split("state=\"").nth(1).and_then(|s| s.split('"').next()).unwrap_or_default();
+        now.state = match state {
+            "play" | "buffering" => State::Playing,
+            "pause" => State::Paused,
+            _ => State::Stopped,
+        };
+        if now.state != State::Stopped {
+            now.position_ms = millis(&xml, "position");
+            now.duration_ms = millis(&xml, "duration");
+        }
+    }
+    Ok(now)
 }

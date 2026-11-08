@@ -1,6 +1,6 @@
 [package]
 name = "roku-remote"
-version = "0.2.0"
+version = "0.3.0"
 edition = "2024"
 license = "MIT"
 
@@ -13,6 +13,11 @@ image = { version = "0.25", default-features = false, features = ["png", "jpeg",
 # Linux/BSD desktop backends: native Wayland + X11 windows.
 [target.'cfg(all(unix, not(target_os = "macos")))'.dependencies]
 eframe = { version = "=0.36.2", default-features = false, features = ["wayland", "x11"] }
+
+# Desktop media controls (MPRIS) over D-Bus.
+[target.'cfg(target_os = "linux")'.dependencies]
+zbus = { version = "5", default-features = false, features = ["async-io", "blocking-api"] }
+async-io = "2"
 
 # Embeds the icon in the Windows .exe.
 [target.'cfg(windows)'.build-dependencies]

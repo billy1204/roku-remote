@@ -2,13 +2,19 @@
 #![cfg_attr(windows, windows_subsystem = "windows")]
 mod ecp;
 mod look;
+#[cfg(target_os = "linux")]
+mod mpris;
 
 use eframe::egui::{self, Vec2, vec2};
 use look::Icon;
 use std::collections::HashMap;
 use std::path::PathBuf;
-use std::sync::Arc;
 use std::sync::mpsc::{Receiver, Sender, channel};
+use std::sync::{Arc, Mutex};
+use std::time::Duration;
+
+/// The device keys and polls go to, shared with the background threads.
+type Target = Arc<Mutex<Option<ecp::Device>>>;
 
 enum Cmd {
     Discover,
@@ -22,6 +28,7 @@ enum Event {
     Found(Vec<ecp::Device>),
     Connected(ecp::Device, Vec<ecp::App>),
     Icon(String, String, Arc<[u8]>),
+    NowPlaying(String, ecp::Playing),
     Error(String),
     Ok,
 }
@@ -32,6 +39,8 @@ enum Event {
 fn spawn_worker(ctx: egui::Context) -> (Sender<Cmd>, Receiver<Event>) {
     let (cmd_tx, cmd_rx) = channel::<Cmd>();
     let (ev_tx, ev_rx) = channel();
+    let target: Target = Arc::default();
+    spawn_poller(ctx.clone(), target.clone(), ev_tx.clone(), cmd_tx.clone());
     std::thread::spawn(move || {
         for cmd in cmd_rx {
             let ev = match cmd {
@@ -51,6 +60,7 @@ fn spawn_worker(ctx: egui::Context) -> (Sender<Cmd>, Receiver<Event>) {
                                 }
                             }
                         });
+                        *target.lock().unwrap() = Some(dev.clone());
                         Event::Connected(dev, apps)
                     }
                     Err(e) => Event::Error(e),
@@ -66,6 +76,45 @@ fn spawn_worker(ctx: egui::Context) -> (Sender<Cmd>, Receiver<Event>) {
         }
     });
     (cmd_tx, ev_rx)
+}
+
+/// Asks the TV what's playing every second, for the now-playing bar and the
+/// desktop's media controls.
+fn spawn_poller(ctx: egui::Context, target: Target, ev_tx: Sender<Event>, cmd_tx: Sender<Cmd>) {
+    std::thread::spawn(move || {
+        #[cfg(target_os = "linux")]
+        let mpris = {
+            let target = target.clone();
+            mpris::Mpris::start(
+                ctx.clone(),
+                Box::new(move |key| {
+                    if let Some(dev) = target.lock().unwrap().as_ref() {
+                        let _ = cmd_tx.send(Cmd::Key(dev.host.clone(), key));
+                    }
+                }),
+            )
+        };
+        #[cfg(not(target_os = "linux"))]
+        let _ = cmd_tx;
+        let mut last = None;
+        loop {
+            std::thread::sleep(Duration::from_secs(1));
+            let Some(dev) = target.lock().unwrap().clone() else { continue };
+            let Ok(now) = ecp::now_playing(&dev.host) else { continue };
+            #[cfg(target_os = "linux")]
+            if let Some(m) = &mpris {
+                m.update(&dev.name, &now, mpris::art_url(&dev.host, &now.app_id));
+            }
+            let current = Some((dev.host.clone(), now.clone()));
+            if last != current {
+                last = current;
+                if ev_tx.send(Event::NowPlaying(dev.host, now)).is_err() {
+                    return;
+                }
+                ctx.request_repaint();
+            }
+        }
+    });
 }
 
 fn config_path() -> Option<PathBuf> {
@@ -104,6 +153,7 @@ struct Remote {
     found: Vec<ecp::Device>,
     apps: Vec<ecp::App>,
     icons: HashMap<String, Arc<[u8]>>,
+    now: Option<ecp::Playing>,
     text: String,
     status: String,
     error: bool,
@@ -127,6 +177,7 @@ impl Remote {
             found: Vec::new(),
             apps: Vec::new(),
             icons: HashMap::new(),
+            now: None,
             text: String::new(),
             status: String::new(),
             error: false,
@@ -164,7 +215,7 @@ impl Remote {
         self.flash.is_some_and(|(k, t)| k == key && ui.input(|i| i.time) - t < FLASH_SECS)
     }
 
-    fn poll(&mut self) {
+    fn poll(&mut self, ctx: &egui::Context) {
         while let Ok(ev) = self.rx.try_recv() {
             match ev {
                 Event::Found(devs) => {
@@ -201,6 +252,14 @@ impl Remote {
                     self.device = Some(dev);
                     self.apps = apps;
                     self.icons.clear();
+                    self.now = None;
+                }
+                Event::NowPlaying(host, now) => {
+                    let Some(dev) = self.device.as_ref().filter(|d| d.host == host) else { continue };
+                    if self.now.as_ref().is_none_or(|n| n.app != now.app) {
+                        ctx.send_viewport_cmd(egui::ViewportCommand::Title(format!("{} · {} — Roku Remote", now.app, dev.name)));
+                    }
+                    self.now = Some(now);
                 }
                 Event::Icon(host, id, bytes) => {
                     if self.device.as_ref().is_some_and(|d| d.host == host) {
@@ -400,6 +459,64 @@ impl Remote {
         }
     }
 
+    fn now_playing(&mut self, ui: &mut egui::Ui) {
+        let Some(now) = self.now.clone() else { return };
+        fn clock(ms: u64) -> String {
+            let s = ms / 1000;
+            if s >= 3600 { format!("{}:{:02}:{:02}", s / 3600, s / 60 % 60, s % 60) } else { format!("{}:{:02}", s / 60, s % 60) }
+        }
+        egui::Frame::new().fill(look::BODY).corner_radius(16).inner_margin(egui::Margin::same(10)).show(ui, |ui| {
+            ui.set_width(ui.available_width());
+            ui.horizontal(|ui| {
+                let (art, _) = ui.allocate_exact_size(vec2(64.0, 48.0), egui::Sense::hover());
+                ui.painter().rect_filled(art, 8.0, look::KEY);
+                match self.icons.get(&now.app_id) {
+                    Some(bytes) => {
+                        egui::Image::from_bytes(format!("bytes://channel/{}.img", now.app_id), egui::load::Bytes::Shared(bytes.clone()))
+                            .corner_radius(8)
+                            .paint_at(ui, art);
+                    }
+                    None => look::paint_icon(ui.painter(), art.shrink(12.0), Icon::Home, look::WEAK),
+                }
+                let play_w = 40.0;
+                let text_w = ui.available_width() - play_w - ui.spacing().item_spacing.x;
+                ui.vertical(|ui| {
+                    ui.set_width(text_w);
+                    ui.spacing_mut().item_spacing.y = 4.0;
+                    ui.add(egui::Label::new(egui::RichText::new(&now.app).strong()).truncate());
+                    let state = match now.state {
+                        ecp::State::Playing => "Playing",
+                        ecp::State::Paused => "Paused",
+                        ecp::State::Stopped => "Open",
+                    };
+                    let line = if now.duration_ms > 0 {
+                        format!("{state}  ·  {} / {}", clock(now.position_ms), clock(now.duration_ms))
+                    } else if now.position_ms > 0 {
+                        format!("{state}  ·  {}", clock(now.position_ms))
+                    } else {
+                        state.to_string()
+                    };
+                    ui.label(egui::RichText::new(line).small().color(look::WEAK));
+                    if now.duration_ms > 0 {
+                        let (bar, _) = ui.allocate_exact_size(vec2(text_w, 4.0), egui::Sense::hover());
+                        ui.painter().rect_filled(bar, 2.0, look::KEY);
+                        let done = (now.position_ms as f32 / now.duration_ms as f32).clamp(0.0, 1.0);
+                        let mut fill = bar;
+                        fill.set_width(bar.width() * done);
+                        ui.painter().rect_filled(fill, 2.0, look::ACCENT);
+                    }
+                });
+                if now.state != ecp::State::Stopped {
+                    let icon = if now.state == ecp::State::Playing { Icon::Pause } else { Icon::PlayOnly };
+                    let lit = self.lit(ui, "Play");
+                    if look::icon_key(ui, Vec2::splat(play_w), icon, lit, None).on_hover_text("Play / Pause").clicked() {
+                        self.key("Play");
+                    }
+                }
+            });
+        });
+    }
+
     fn search(&mut self, ui: &mut egui::Ui) {
         ui.horizontal(|ui| {
             let edit = ui.add(
@@ -508,7 +625,7 @@ impl Remote {
         *frames += 1;
         ui.ctx().request_repaint();
         // Wait for the channel logos, then a few more frames for them to decode.
-        if (self.device.is_some() && self.icons.len() >= self.apps.len().min(9) && *frames > 120) || *frames > 900 {
+        if (self.device.is_some() && self.now.is_some() && self.icons.len() >= self.apps.len().min(9) && *frames > 120) || *frames > 900 {
             *frames = u32::MAX;
             ui.ctx().send_viewport_cmd(egui::ViewportCommand::Screenshot(Default::default()));
         }
@@ -517,7 +634,7 @@ impl Remote {
 
 impl eframe::App for Remote {
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
-        self.poll();
+        self.poll(&ui.ctx().clone());
         self.shortcuts(ui);
         self.take_screenshot(ui);
         egui::Panel::bottom("status")
@@ -540,6 +657,7 @@ impl eframe::App for Remote {
             .show(ui, |ui| {
                 self.header(ui);
                 ui.add_space(4.0);
+                self.now_playing(ui);
                 let mut scroll = egui::ScrollArea::vertical().auto_shrink(false);
                 if let Some(y) = std::env::var("ROKU_REMOTE_SCROLL").ok().and_then(|y| y.parse().ok()) {
                     scroll = scroll.vertical_scroll_offset(y);

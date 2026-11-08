@@ -66,6 +66,8 @@ pub enum Icon {
     Replay,
     Rev,
     Play,
+    PlayOnly,
+    Pause,
     Fwd,
     VolDown,
     VolUp,
@@ -148,6 +150,15 @@ pub fn paint_icon(p: &egui::Painter, rect: Rect, icon: Icon, color: Color32) {
             tri(p, [c + vec2(-s * 0.62, -h), c + vec2(-s * 0.62, h), c + vec2(s * 0.1, 0.0)], color);
             for x in [s * 0.3, s * 0.6] {
                 p.rect_filled(Rect::from_center_size(c + vec2(x, 0.0), vec2(s * 0.16, h * 2.0)), 1.0, color);
+            }
+        }
+        Icon::PlayOnly => {
+            let h = s * 0.62;
+            tri(p, [c + vec2(-s * 0.45, -h), c + vec2(-s * 0.45, h), c + vec2(s * 0.62, 0.0)], color);
+        }
+        Icon::Pause => {
+            for x in [-s * 0.26, s * 0.26] {
+                p.rect_filled(Rect::from_center_size(c + vec2(x, 0.0), vec2(s * 0.24, s * 1.15)), 1.5, color);
             }
         }
         Icon::VolDown | Icon::VolUp | Icon::Mute => {
