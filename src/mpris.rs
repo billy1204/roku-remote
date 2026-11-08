@@ -1,26 +1,44 @@
 //! MPRIS media player on the session bus, so the desktop's media controls
 //! (COSMIC's panel, GNOME, KDE) and the keyboard's media keys show and
 //! control what's playing on the TV.
+use crate::core::Core;
 use crate::ecp::{Playing, State};
-use eframe::egui;
 use std::collections::HashMap;
+use std::sync::OnceLock;
 use zbus::interface;
 use zbus::zvariant::{ObjectPath, OwnedValue, Value};
 
 const PATH: &str = "/org/mpris/MediaPlayer2";
 
+/// Our own name on the bus: holding it makes this the running instance.
+const APP_NAME: &str = "io.github.billy1204.RokuRemote";
+const APP_PATH: &str = "/io/github/billy1204/RokuRemote";
+
+static MPRIS: OnceLock<Mpris> = OnceLock::new();
+
+/// Lets a second launch bring this instance's window up instead.
+struct App {
+    core: Core,
+}
+
+#[interface(name = "io.github.billy1204.RokuRemote")]
+impl App {
+    fn show(&self) {
+        self.core.show_window();
+    }
+}
+
 struct Root {
-    ctx: egui::Context,
+    core: Core,
 }
 
 #[interface(name = "org.mpris.MediaPlayer2")]
 impl Root {
     fn raise(&self) {
-        self.ctx.send_viewport_cmd(egui::ViewportCommand::Visible(true));
-        self.ctx.send_viewport_cmd(egui::ViewportCommand::Focus);
+        self.core.show_window();
     }
     fn quit(&self) {
-        self.ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+        self.core.quit();
     }
     #[zbus(property)]
     fn can_quit(&self) -> bool {
@@ -52,11 +70,8 @@ impl Root {
     }
 }
 
-/// Sends a key to the connected TV.
-pub type KeySender = Box<dyn Fn(&'static str) + Send + Sync>;
-
 struct Player {
-    key: KeySender,
+    core: Core,
     now: Playing,
     device: String,
     art: Option<String>,
@@ -65,28 +80,28 @@ struct Player {
 #[interface(name = "org.mpris.MediaPlayer2.Player")]
 impl Player {
     fn play_pause(&self) {
-        (self.key)("Play");
+        self.core.key("Play");
     }
     fn play(&self) {
         if self.now.state != State::Playing {
-            (self.key)("Play");
+            self.core.key("Play");
         }
     }
     fn pause(&self) {
         if self.now.state == State::Playing {
-            (self.key)("Play");
+            self.core.key("Play");
         }
     }
     fn next(&self) {
-        (self.key)("Fwd");
+        self.core.key("Fwd");
     }
     /// Instant replay jumps back a few seconds and keeps playing, which is
     /// what "previous" is mostly wanted for on a TV.
     fn previous(&self) {
-        (self.key)("InstantReplay");
+        self.core.key("InstantReplay");
     }
     fn stop(&self) {
-        (self.key)("Back");
+        self.core.key("Back");
     }
     fn seek(&self, _offset: i64) {}
     fn set_position(&self, _track: ObjectPath<'_>, _position: i64) {}
@@ -172,22 +187,50 @@ pub struct Mpris {
     conn: zbus::blocking::Connection,
 }
 
-impl Mpris {
-    pub fn start(ctx: egui::Context, key: KeySender) -> Option<Self> {
-        let player = Player { key, now: Playing::default(), device: String::new(), art: None };
-        let build = |name: String| {
-            zbus::blocking::connection::Builder::session()?
-                .name(name)?
-                .serve_at(PATH, Root { ctx: ctx.clone() })?
-                .build()
-        };
-        let conn = build("org.mpris.MediaPlayer2.roku_remote".into())
-            .or_else(|_| build(format!("org.mpris.MediaPlayer2.roku_remote.instance{}", std::process::id())))
-            .ok()?;
-        conn.object_server().at(PATH, player).ok()?;
-        Some(Self { conn })
-    }
+pub enum Start {
+    Started,
+    /// Another instance holds the name; it was asked to show its window.
+    AlreadyRunning,
+    /// No session bus: run without media controls.
+    Unavailable,
+}
 
+/// Claim the app's bus name and publish the media player.
+pub fn start(core: Core) -> Start {
+    // zbus defaults to replacing (and being replaced by) other owners; a
+    // second launch must find the name taken instead.
+    let built = zbus::blocking::connection::Builder::session().and_then(|b| {
+        b.allow_name_replacements(false)
+            .replace_existing_names(false)
+            .name(APP_NAME)?
+            .serve_at(APP_PATH, App { core: core.clone() })?
+            .serve_at(PATH, Root { core: core.clone() })?
+            .serve_at(PATH, Player { core, now: Playing::default(), device: String::new(), art: None })?
+            .build()
+    });
+    match built {
+        Ok(conn) => {
+            // MPRIS clients find players by this name prefix.
+            let _ = conn.request_name_with_flags("org.mpris.MediaPlayer2.roku_remote", zbus::fdo::RequestNameFlags::DoNotQueue.into());
+            let _ = MPRIS.set(Mpris { conn });
+            Start::Started
+        }
+        Err(zbus::Error::NameTaken) => {
+            let shown = zbus::blocking::Connection::session()
+                .and_then(|c| c.call_method(Some(APP_NAME), APP_PATH, Some(APP_NAME), "Show", &()).map(drop));
+            if shown.is_ok() { Start::AlreadyRunning } else { Start::Unavailable }
+        }
+        Err(_) => Start::Unavailable,
+    }
+}
+
+pub fn update(device: &str, now: &Playing, art: Option<String>) {
+    if let Some(m) = MPRIS.get() {
+        m.update(device, now, art);
+    }
+}
+
+impl Mpris {
     /// Publish the TV's state; signals only what changed.
     pub fn update(&self, device: &str, now: &Playing, art: Option<String>) {
         let Ok(iface) = self.conn.object_server().interface::<_, Player>(PATH) else { return };

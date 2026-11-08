@@ -11,6 +11,10 @@ A small desktop remote for Roku TVs and streaming players on your home network, 
 - **TV controls** (Roku TVs only): Volume up/down/mute and HDMI 1–3/Antenna inputs.
 - **Type into search boxes** from your keyboard instead of the on-screen keyboard.
 - **Channel launcher:** a button for every installed channel.
+- **Now playing:** the current channel, play state and progress, in the window and the title bar.
+- **Linux desktop integration:**
+  - **Tray icon:** play/pause, volume, mute, power and switching TVs without opening the window. Scroll on the icon to change the volume; click it to show or hide the remote. Closing the window keeps the remote in the tray.
+  - **Media controls:** the TV appears in your desktop's media controls (COSMIC, GNOME, KDE) with the channel's logo, and your keyboard's media keys control it.
 - **Keyboard shortcuts:**
 
   | Key | Action |

@@ -1,137 +1,27 @@
 // No console window behind the remote on Windows.
 #![cfg_attr(windows, windows_subsystem = "windows")]
+mod core;
 mod ecp;
 mod look;
 #[cfg(target_os = "linux")]
 mod mpris;
+#[cfg(target_os = "linux")]
+mod tray;
 
 use eframe::egui::{self, Vec2, vec2};
+use crate::core::{Cmd, Core, Event, Wake};
 use look::Icon;
+use std::cell::RefCell;
 use std::collections::HashMap;
 use std::path::PathBuf;
-use std::sync::mpsc::{Receiver, Sender, channel};
-use std::sync::{Arc, Mutex};
-use std::time::Duration;
+use std::rc::Rc;
+use std::sync::Arc;
+use std::sync::mpsc::Receiver;
 
-/// The device keys and polls go to, shared with the background threads.
-type Target = Arc<Mutex<Option<ecp::Device>>>;
-
-enum Cmd {
-    Discover,
-    Connect(String),
-    Key(String, &'static str),
-    Text(String, String),
-    Launch(String, String),
-}
-
-enum Event {
-    Found(Vec<ecp::Device>),
-    Connected(ecp::Device, Vec<ecp::App>),
-    Icon(String, String, Arc<[u8]>),
-    NowPlaying(String, ecp::Playing),
-    Error(String),
-    Ok,
-}
-
-/// Network calls run on one worker thread so the window never blocks, and
-/// keypresses reach the TV in the order they were pressed. Channel logos load
-/// on their own thread so they never hold up a keypress.
-fn spawn_worker(ctx: egui::Context) -> (Sender<Cmd>, Receiver<Event>) {
-    let (cmd_tx, cmd_rx) = channel::<Cmd>();
-    let (ev_tx, ev_rx) = channel();
-    let target: Target = Arc::default();
-    spawn_poller(ctx.clone(), target.clone(), ev_tx.clone(), cmd_tx.clone());
-    std::thread::spawn(move || {
-        for cmd in cmd_rx {
-            let ev = match cmd {
-                Cmd::Discover => Event::Found(ecp::discover()),
-                Cmd::Connect(host) => match ecp::device_info(&host) {
-                    Ok(dev) => {
-                        let apps = ecp::apps(&host).unwrap_or_default();
-                        let (tx, ctx, ids) = (ev_tx.clone(), ctx.clone(), apps.iter().map(|a| a.id.clone()).collect::<Vec<_>>());
-                        let host = host.clone();
-                        std::thread::spawn(move || {
-                            for id in ids {
-                                if let Ok(bytes) = ecp::icon(&host, &id) {
-                                    if tx.send(Event::Icon(host.clone(), id, bytes.into())).is_err() {
-                                        return;
-                                    }
-                                    ctx.request_repaint();
-                                }
-                            }
-                        });
-                        *target.lock().unwrap() = Some(dev.clone());
-                        Event::Connected(dev, apps)
-                    }
-                    Err(e) => Event::Error(e),
-                },
-                Cmd::Key(host, key) => ecp::keypress(&host, key).map_or_else(Event::Error, |_| Event::Ok),
-                Cmd::Text(host, text) => ecp::type_text(&host, &text).map_or_else(Event::Error, |_| Event::Ok),
-                Cmd::Launch(host, id) => ecp::launch(&host, &id).map_or_else(Event::Error, |_| Event::Ok),
-            };
-            if ev_tx.send(ev).is_err() {
-                break;
-            }
-            ctx.request_repaint();
-        }
-    });
-    (cmd_tx, ev_rx)
-}
-
-/// Asks the TV what's playing every second, for the now-playing bar and the
-/// desktop's media controls.
-fn spawn_poller(ctx: egui::Context, target: Target, ev_tx: Sender<Event>, cmd_tx: Sender<Cmd>) {
-    std::thread::spawn(move || {
-        #[cfg(target_os = "linux")]
-        let mpris = {
-            let target = target.clone();
-            mpris::Mpris::start(
-                ctx.clone(),
-                Box::new(move |key| {
-                    if let Some(dev) = target.lock().unwrap().as_ref() {
-                        let _ = cmd_tx.send(Cmd::Key(dev.host.clone(), key));
-                    }
-                }),
-            )
-        };
-        #[cfg(not(target_os = "linux"))]
-        let _ = cmd_tx;
-        let mut last = None;
-        loop {
-            std::thread::sleep(Duration::from_secs(1));
-            let Some(dev) = target.lock().unwrap().clone() else { continue };
-            let Ok(now) = ecp::now_playing(&dev.host) else { continue };
-            #[cfg(target_os = "linux")]
-            if let Some(m) = &mpris {
-                m.update(&dev.name, &now, mpris::art_url(&dev.host, &now.app_id));
-            }
-            let current = Some((dev.host.clone(), now.clone()));
-            if last != current {
-                last = current;
-                if ev_tx.send(Event::NowPlaying(dev.host, now)).is_err() {
-                    return;
-                }
-                ctx.request_repaint();
-            }
-        }
-    });
-}
-
-fn config_path() -> Option<PathBuf> {
-    #[cfg(windows)]
-    let base = PathBuf::from(std::env::var_os("APPDATA")?);
-    #[cfg(not(windows))]
-    let base = std::env::var_os("XDG_CONFIG_HOME")
-        .map(PathBuf::from)
-        .or_else(|| std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".config")))?;
-    Some(base.join("roku-remote").join("host"))
-}
-
-fn save_host(host: &str) {
-    if let Some(path) = config_path() {
-        let _ = std::fs::create_dir_all(path.parent().unwrap());
-        let _ = std::fs::write(path, host);
-    }
+/// Redraw the tray from the shared state (no-op without a tray).
+pub fn refresh_tray() {
+    #[cfg(target_os = "linux")]
+    tray::refresh();
 }
 
 /// Lay out a row `total` wide, centered in the available width.
@@ -145,8 +35,10 @@ fn centered_row(ui: &mut egui::Ui, total: f32, add: impl FnOnce(&mut egui::Ui)) 
 const FLASH_SECS: f64 = 0.15;
 
 struct Remote {
-    tx: Sender<Cmd>,
+    core: Core,
     rx: Receiver<Event>,
+    /// Window title last set, so it's only sent when it changes.
+    title: String,
     host_input: String,
     show_ip: bool,
     device: Option<ecp::Device>,
@@ -165,12 +57,12 @@ struct Remote {
 }
 
 impl Remote {
-    fn new(ctx: egui::Context) -> Self {
-        let (tx, rx) = spawn_worker(ctx);
-        let saved = config_path().and_then(|p| std::fs::read_to_string(p).ok()).map(|s| s.trim().to_string());
+    fn new(core: Core, rx: Receiver<Event>) -> Self {
+        let saved = core::saved_host();
         let mut app = Self {
-            tx,
+            core,
             rx,
+            title: String::new(),
             host_input: saved.clone().unwrap_or_default(),
             show_ip: false,
             device: None,
@@ -185,16 +77,18 @@ impl Remote {
             flash: None,
             screenshot: std::env::var_os("ROKU_REMOTE_SCREENSHOT").map(|p| (PathBuf::from(p), 0)),
         };
-        // Discover too, so the device menu lists every Roku even when the
-        // saved one connects.
-        let _ = app.tx.send(Cmd::Discover);
-        match saved.filter(|s| !s.is_empty()) {
+        // Reconnect before searching: the worker runs commands in order, so
+        // when the search finishes the saved TV is already connected and a
+        // search that hears from only one Roku doesn't switch to it.
+        match saved {
             Some(host) => app.send(Cmd::Connect(host), "Connecting…"),
             None => {
                 app.busy = true;
                 app.status = "Searching for Roku devices…".into();
             }
         }
+        // Search either way, so the device menu lists every Roku.
+        let _ = app.core.cmd.send(Cmd::Discover);
         app
     }
 
@@ -202,13 +96,18 @@ impl Remote {
         self.busy = matches!(cmd, Cmd::Discover | Cmd::Connect(_));
         self.status = status.to_string();
         self.error = false;
-        let _ = self.tx.send(cmd);
+        let _ = self.core.cmd.send(cmd);
     }
 
     fn key(&mut self, key: &'static str) {
-        if let Some(dev) = &self.device {
-            let _ = self.tx.send(Cmd::Key(dev.host.clone(), key));
-        }
+        self.core.key(key);
+    }
+
+    /// The window was reopened from the tray: catch up on what happened
+    /// while it was closed.
+    fn reopened(&mut self) {
+        self.title.clear();
+        self.now = self.core.state.lock().unwrap().now.clone();
     }
 
     fn lit(&self, ui: &egui::Ui, key: &str) -> bool {
@@ -216,6 +115,14 @@ impl Remote {
     }
 
     fn poll(&mut self, ctx: &egui::Context) {
+        let title = match (&self.device, &self.now) {
+            (Some(dev), Some(now)) => format!("{} · {} — Roku Remote", now.app, dev.name),
+            _ => "Roku Remote".into(),
+        };
+        if title != self.title {
+            ctx.send_viewport_cmd(egui::ViewportCommand::Title(title.clone()));
+            self.title = title;
+        }
         while let Ok(ev) = self.rx.try_recv() {
             match ev {
                 Event::Found(devs) => {
@@ -235,7 +142,6 @@ impl Remote {
                 }
                 Event::Connected(dev, apps) => {
                     self.busy = false;
-                    save_host(&dev.host);
                     self.error = dev.limited;
                     self.status = if dev.limited {
                         "This TV only accepts volume from the network. On the TV, set Settings > \
@@ -255,11 +161,9 @@ impl Remote {
                     self.now = None;
                 }
                 Event::NowPlaying(host, now) => {
-                    let Some(dev) = self.device.as_ref().filter(|d| d.host == host) else { continue };
-                    if self.now.as_ref().is_none_or(|n| n.app != now.app) {
-                        ctx.send_viewport_cmd(egui::ViewportCommand::Title(format!("{} · {} — Roku Remote", now.app, dev.name)));
+                    if self.device.as_ref().is_some_and(|d| d.host == host) {
+                        self.now = Some(now);
                     }
-                    self.now = Some(now);
                 }
                 Event::Icon(host, id, bytes) => {
                     if self.device.as_ref().is_some_and(|d| d.host == host) {
@@ -531,7 +435,7 @@ impl Remote {
                 && !self.text.is_empty()
                 && let Some(dev) = &self.device
             {
-                let _ = self.tx.send(Cmd::Text(dev.host.clone(), std::mem::take(&mut self.text)));
+                let _ = self.core.cmd.send(Cmd::Text(dev.host.clone(), std::mem::take(&mut self.text)));
             }
         });
     }
@@ -597,7 +501,7 @@ impl Remote {
             });
         }
         if let (Some(id), Some(dev)) = (launch, &self.device) {
-            let _ = self.tx.send(Cmd::Launch(dev.host.clone(), id));
+            let _ = self.core.cmd.send(Cmd::Launch(dev.host.clone(), id));
         }
     }
 
@@ -632,7 +536,17 @@ impl Remote {
     }
 }
 
-impl eframe::App for Remote {
+/// The window's view of the long-lived `Remote`, which survives the window
+/// closing to the tray and reopening.
+struct Window(Rc<RefCell<Remote>>);
+
+impl eframe::App for Window {
+    fn ui(&mut self, ui: &mut egui::Ui, frame: &mut eframe::Frame) {
+        self.0.borrow_mut().ui(ui, frame);
+    }
+}
+
+impl Remote {
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         self.poll(&ui.ctx().clone());
         self.shortcuts(ui);
@@ -683,22 +597,52 @@ impl eframe::App for Remote {
 }
 
 fn main() -> eframe::Result {
-    let options = eframe::NativeOptions {
-        viewport: egui::ViewportBuilder::default()
-            .with_inner_size([380.0, 820.0])
-            .with_min_inner_size([340.0, 560.0])
-            .with_icon(eframe::icon_data::from_png_bytes(include_bytes!("../assets/icon.png")).unwrap_or_default())
-            .with_app_id("roku-remote"),
-        renderer: eframe::Renderer::Glow,
-        ..Default::default()
+    let (core, events, wake) = Core::start();
+    #[cfg(target_os = "linux")]
+    let has_tray = {
+        if let mpris::Start::AlreadyRunning = mpris::start(core.clone()) {
+            return Ok(());
+        }
+        tray::start(core.clone())
     };
-    eframe::run_native(
-        "Roku Remote",
-        options,
-        Box::new(|cc| {
-            look::install(&cc.egui_ctx);
-            egui_extras::install_image_loaders(&cc.egui_ctx);
-            Ok(Box::new(Remote::new(cc.egui_ctx.clone())))
-        }),
-    )
+    #[cfg(not(target_os = "linux"))]
+    let has_tray = false;
+
+    let remote = Rc::new(RefCell::new(Remote::new(core.clone(), events)));
+    loop {
+        let options = eframe::NativeOptions {
+            viewport: egui::ViewportBuilder::default()
+                .with_inner_size([380.0, 820.0])
+                .with_min_inner_size([340.0, 560.0])
+                .with_icon(eframe::icon_data::from_png_bytes(include_bytes!("../assets/icon.png")).unwrap_or_default())
+                .with_app_id("roku-remote"),
+            renderer: eframe::Renderer::Glow,
+            ..Default::default()
+        };
+        let (window, state) = (remote.clone(), core.state.clone());
+        eframe::run_native(
+            "Roku Remote",
+            options,
+            Box::new(move |cc| {
+                look::install(&cc.egui_ctx);
+                egui_extras::install_image_loaders(&cc.egui_ctx);
+                state.lock().unwrap().ctx = Some(cc.egui_ctx.clone());
+                window.borrow_mut().reopened();
+                refresh_tray();
+                Ok(Box::new(Window(window)))
+            }),
+        )?;
+        core.state.lock().unwrap().ctx = None;
+        refresh_tray();
+        // Closing the window hides it to the tray; the tray reopens it.
+        if !has_tray || core.state.lock().unwrap().quit {
+            break;
+        }
+        match wake.recv() {
+            Ok(Wake::Open) => continue,
+            Ok(Wake::Quit) | Err(_) => break,
+        }
+    }
+    // The tray and network threads don't need to wind down.
+    std::process::exit(0)
 }
