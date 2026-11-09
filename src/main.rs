@@ -59,6 +59,7 @@ struct Remote {
     picking: Option<Receiver<Result<Option<PathBuf>, String>>>,
     share_help: bool,
     youtube_help: bool,
+    connect_help: bool,
     /// Dev aid: save a screenshot here once the window has settled, then quit.
     screenshot: Option<(PathBuf, u32)>,
 }
@@ -96,6 +97,7 @@ impl Remote {
             picking: None,
             share_help: false,
             youtube_help: false,
+            connect_help: false,
             screenshot: std::env::var_os("ROKU_REMOTE_SCREENSHOT").map(|p| (PathBuf::from(p), 0)),
         };
         // Reconnect before searching: the worker runs commands in order, so
@@ -278,7 +280,7 @@ impl Remote {
     fn header(&mut self, ui: &mut egui::Ui) {
         ui.horizontal(|ui| {
             let name = self.device.as_ref().map_or("Roku Remote".to_string(), |d| d.name.clone());
-            let menu_w = ui.available_width() - 38.0 - ui.spacing().item_spacing.x;
+            let menu_w = ui.available_width() - 2.0 * (38.0 + ui.spacing().item_spacing.x);
             let mut pick = None;
             let combo = egui::ComboBox::from_id_salt("device")
                 .selected_text(
@@ -311,6 +313,10 @@ impl Remote {
             if refresh.on_hover_text("Search the network again").clicked() {
                 self.send(Cmd::Discover, "Searching for Roku devices…");
             }
+            let help = look::text_key(ui, Vec2::splat(38.0), "?", self.connect_help).on_hover_text("TV not responding?");
+            if help.clicked() {
+                self.connect_help = !self.connect_help;
+            }
         });
         ui.add_space(-4.0);
         ui.horizontal(|ui| {
@@ -341,6 +347,48 @@ impl Remote {
                 }
             });
         }
+        if self.connect_help {
+            self.connect_help(ui);
+        }
+    }
+
+    fn connect_help(&self, ui: &mut egui::Ui) {
+        let weak = |t: &str| egui::RichText::new(t).small().color(look::WEAK);
+        ui.add_space(6.0);
+        egui::Frame::new().fill(look::BODY).corner_radius(16).inner_margin(egui::Margin::same(12)).show(ui, |ui| {
+            ui.set_width(ui.available_width());
+            ui.spacing_mut().item_spacing.y = 6.0;
+            ui.label(egui::RichText::new("TV not responding?").strong());
+            ui.add(
+                egui::Label::new(weak(
+                    "Newer Roku TVs only accept volume from apps until “Control by mobile apps” is enabled. \
+                     Using the TV's own remote:",
+                ))
+                .wrap(),
+            );
+            for (n, step) in [
+                ("1", "Press Home and open Settings"),
+                ("2", "System"),
+                ("3", "Advanced system settings"),
+                ("4", "Control by mobile apps"),
+                ("5", "Network access: choose Enabled"),
+            ] {
+                ui.horizontal(|ui| {
+                    ui.label(egui::RichText::new(n).strong().color(look::ACCENT));
+                    ui.label(egui::RichText::new(step).small());
+                });
+            }
+            if self.device.as_ref().is_some_and(|d| d.limited) {
+                ui.add(egui::Label::new(egui::RichText::new("This TV is set to Limited right now, so only volume works.").small().color(look::WARN)).wrap());
+            }
+            ui.add(
+                egui::Label::new(weak(
+                    "Still nothing? Make sure the TV and this computer are on the same network, then press the \
+                     search button to look again.",
+                ))
+                .wrap(),
+            );
+        });
     }
 
     /// One key: sends `key` on click, lights up while pressed or flashed.
