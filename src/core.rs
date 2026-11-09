@@ -1,8 +1,9 @@
 //! Everything that outlives the window: the network worker, the now-playing
 //! poller and the state the tray and desktop media controls read.
 use crate::ecp;
+use crate::share::{self, Share};
 use eframe::egui;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::mpsc::{Receiver, Sender, channel};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
@@ -39,6 +40,14 @@ pub struct Shared {
     /// The open window's context; `None` while the window is closed.
     pub ctx: Option<egui::Context>,
     pub quit: bool,
+    /// The shared folder, while sharing.
+    pub share: Option<Arc<Share>>,
+    /// A firewall that may keep the TV out of the share, checked when
+    /// sharing starts.
+    pub firewall: Option<Arc<share::Firewall>>,
+    /// Whether the connected TV has Roku Media Player; `None` when its
+    /// channel list is unavailable.
+    pub media_player: Option<bool>,
 }
 
 #[derive(Clone)]
@@ -116,6 +125,40 @@ impl Core {
         }
     }
 
+    /// Share `folder` with Roku Media Player, replacing any earlier share,
+    /// and open Media Player on the TV.
+    pub fn start_share(&self, folder: &Path) -> Result<(), String> {
+        // Stop the old share first so the new one can take its port.
+        self.state.lock().unwrap().share = None;
+        let share = Arc::new(Share::start(folder)?);
+        save("share", &share.folder().to_string_lossy());
+        let firewall = share::firewall().map(Arc::new);
+        {
+            let mut st = self.state.lock().unwrap();
+            st.share = Some(share);
+            st.firewall = firewall;
+        }
+        self.open_media_player();
+        crate::refresh_tray();
+        self.repaint();
+        Ok(())
+    }
+
+    pub fn stop_share(&self) {
+        self.state.lock().unwrap().share = None;
+        crate::refresh_tray();
+        self.repaint();
+    }
+
+    pub fn open_media_player(&self) {
+        let st = self.state.lock().unwrap();
+        if let Some(dev) = &st.device
+            && st.media_player != Some(false)
+        {
+            let _ = self.cmd.send(Cmd::Launch(dev.host.clone(), share::MEDIA_PLAYER.into()));
+        }
+    }
+
     /// Network calls run on one worker thread so the window never blocks, and
     /// keypresses reach the TV in the order they were pressed. Channel logos
     /// load on their own thread so they never hold up a keypress.
@@ -150,11 +193,12 @@ impl Core {
                                 }
                             }
                         });
-                        save_host(&dev.host);
+                        save("host", &dev.host);
                         {
                             let mut st = self.state.lock().unwrap();
                             st.device = Some(dev.clone());
                             st.now = None;
+                            st.media_player = (!apps.is_empty()).then(|| apps.iter().any(|a| a.id == share::MEDIA_PLAYER));
                             if !st.found.iter().any(|d| d.host == dev.host) {
                                 st.found.push(dev.clone());
                             }
@@ -206,24 +250,33 @@ impl Core {
     }
 }
 
-fn config_path() -> Option<PathBuf> {
+fn config_path(name: &str) -> Option<PathBuf> {
     #[cfg(windows)]
     let base = PathBuf::from(std::env::var_os("APPDATA")?);
     #[cfg(not(windows))]
     let base = std::env::var_os("XDG_CONFIG_HOME")
         .map(PathBuf::from)
         .or_else(|| std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".config")))?;
-    Some(base.join("roku-remote").join("host"))
+    Some(base.join("roku-remote").join(name))
+}
+
+fn saved(name: &str) -> Option<String> {
+    let value = std::fs::read_to_string(config_path(name)?).ok()?;
+    Some(value.trim().to_string()).filter(|v| !v.is_empty())
+}
+
+fn save(name: &str, value: &str) {
+    if let Some(path) = config_path(name) {
+        let _ = std::fs::create_dir_all(path.parent().unwrap());
+        let _ = std::fs::write(path, value);
+    }
 }
 
 pub fn saved_host() -> Option<String> {
-    let host = std::fs::read_to_string(config_path()?).ok()?;
-    Some(host.trim().to_string()).filter(|h| !h.is_empty())
+    saved("host")
 }
 
-fn save_host(host: &str) {
-    if let Some(path) = config_path() {
-        let _ = std::fs::create_dir_all(path.parent().unwrap());
-        let _ = std::fs::write(path, host);
-    }
+/// The folder shared last, if it still exists.
+pub fn saved_share() -> Option<PathBuf> {
+    saved("share").map(PathBuf::from).filter(|p| p.is_dir())
 }

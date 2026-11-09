@@ -141,6 +141,21 @@ impl ksni::Tray for Tray {
                 .into(),
             );
         }
+        let sharing = self.core.state.lock().unwrap().share.as_ref().map(|s| s.folder().to_path_buf());
+        let folder_name = |p: &std::path::Path| p.file_name().map_or_else(|| p.display().to_string(), |n| n.to_string_lossy().into_owned());
+        match sharing {
+            Some(folder) => items.push(item(&format!("Stop Sharing “{}”", folder_name(&folder)), "folder-remote", true, |t| t.core.stop_share())),
+            None => {
+                if let Some(last) = crate::core::saved_share() {
+                    let label = format!("Share “{}”", folder_name(&last));
+                    items.push(item(&label, "folder-remote", true, move |t| {
+                        if let Err(e) = t.core.start_share(&last) {
+                            eprintln!("roku-remote: couldn't share {}: {e}", last.display());
+                        }
+                    }));
+                }
+            }
+        }
         items.extend([
             MenuItem::Separator,
             if self.core.window_open() {

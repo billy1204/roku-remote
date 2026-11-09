@@ -9,6 +9,8 @@ eframe = { version = "=0.36.2", default-features = false, features = ["glow", "d
 # Channel logos: the TV serves them as WebP, PNG or JPEG.
 egui_extras = { version = "=0.36.2", default-features = false, features = ["image"] }
 image = { version = "0.25", default-features = false, features = ["png", "jpeg", "webp"] }
+# Sharing a folder: SSDP needs port 1900 shared with other programs.
+socket2 = { version = "0.6", features = ["all"] }
 
 # Linux/BSD desktop backends: native Wayland + X11 windows.
 [target.'cfg(all(unix, not(target_os = "macos")))'.dependencies]
@@ -19,6 +21,10 @@ eframe = { version = "=0.36.2", default-features = false, features = ["wayland",
 zbus = { version = "5", default-features = false, features = ["async-io", "blocking-api"] }
 async-io = "2"
 ksni = { version = "0.3", default-features = false, features = ["blocking", "async-io"] }
+
+# Folder picker (Linux uses the desktop portal over zbus).
+[target.'cfg(windows)'.dependencies]
+rfd = { version = "0.15", default-features = false }
 
 # Embeds the icon in the Windows .exe.
 [target.'cfg(windows)'.build-dependencies]

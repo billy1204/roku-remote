@@ -12,6 +12,7 @@ A small desktop remote for Roku TVs and streaming players on your home network, 
 - **Type into search boxes** from your keyboard instead of the on-screen keyboard.
 - **Channel launcher:** a button for every installed channel.
 - **Now playing:** the current channel, play state and progress, in the window and the title bar.
+- **Share media:** pick a folder and play its videos, music and photos on the TV with Roku's free **Roku Media Player** channel. The **?** button explains the setup, checks that Media Player is on the TV and warns if a firewall may keep the TV out.
 - **Linux desktop integration:**
   - **Tray icon:** play/pause, volume, mute, power and switching TVs without opening the window. Scroll on the icon to change the volume; click it to show or hide the remote. Closing the window keeps the remote in the tray.
   - **Media controls:** the TV appears in your desktop's media controls (COSMIC, GNOME, KDE) with the channel's logo, and your keyboard's media keys control it.
@@ -52,6 +53,12 @@ chmod +x Roku-Remote-x86_64.AppImage
 **Windows:** download `Roku-Remote-windows-x86_64.exe` and double-click it. It's not code-signed, so Windows SmartScreen may warn you the first time; choose **More info > Run anyway**. If Windows Firewall asks, allow it on private networks so it can find your Rokus.
 
 Your computer and the Roku must be on the same network.
+
+### Sharing media
+
+Install **Roku Media Player** on the TV (Home > Streaming Store > Roku Media Player > Add channel). Then click **Share a folder…** in the app. Media Player opens on the TV; choose **Roku Remote (*your computer's name*)** and browse with the Roku remote.
+
+The share is read-only, and only the folder you pick is visible. If the TV can't see your computer, a firewall may be blocking it. The app detects ufw, firewalld and Windows Firewall and shows how to let the TV in (TCP ports 8200–8209 and UDP port 1900).
 
 ## Build
 

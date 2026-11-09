@@ -5,6 +5,8 @@ mod ecp;
 mod look;
 #[cfg(target_os = "linux")]
 mod mpris;
+mod pick;
+mod share;
 #[cfg(target_os = "linux")]
 mod tray;
 
@@ -13,7 +15,7 @@ use crate::core::{Cmd, Core, Event, Wake};
 use look::Icon;
 use std::cell::RefCell;
 use std::collections::HashMap;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::rc::Rc;
 use std::sync::Arc;
 use std::sync::mpsc::Receiver;
@@ -52,8 +54,21 @@ struct Remote {
     busy: bool,
     /// Key last sent from the keyboard and when, so its button lights up.
     flash: Option<(&'static str, f64)>,
+    /// The folder picker, while it's open.
+    picking: Option<Receiver<Result<Option<PathBuf>, String>>>,
+    share_help: bool,
     /// Dev aid: save a screenshot here once the window has settled, then quit.
     screenshot: Option<(PathBuf, u32)>,
+}
+
+/// A folder as people know it: `~/Videos` rather than `/home/me/Videos`.
+fn folder_label(path: &Path) -> String {
+    let home = std::env::var_os(if cfg!(windows) { "USERPROFILE" } else { "HOME" }).map(PathBuf::from);
+    match home.as_deref().and_then(|h| path.strip_prefix(h).ok()) {
+        Some(rel) if rel.as_os_str().is_empty() => "~".into(),
+        Some(rel) => format!("~{}{}", std::path::MAIN_SEPARATOR, rel.display()),
+        None => path.display().to_string(),
+    }
 }
 
 impl Remote {
@@ -75,6 +90,8 @@ impl Remote {
             error: false,
             busy: false,
             flash: None,
+            picking: None,
+            share_help: false,
             screenshot: std::env::var_os("ROKU_REMOTE_SCREENSHOT").map(|p| (PathBuf::from(p), 0)),
         };
         // Reconnect before searching: the worker runs commands in order, so
@@ -114,7 +131,44 @@ impl Remote {
         self.flash.is_some_and(|(k, t)| k == key && ui.input(|i| i.time) - t < FLASH_SECS)
     }
 
+    /// Ask for a folder on another thread; the window keeps running.
+    fn pick_folder(&mut self, ctx: &egui::Context) {
+        if self.picking.is_some() {
+            return;
+        }
+        let (tx, rx) = std::sync::mpsc::channel();
+        let ctx = ctx.clone();
+        std::thread::spawn(move || {
+            let _ = tx.send(pick::folder("Choose a folder to share with the TV"));
+            ctx.request_repaint();
+        });
+        self.picking = Some(rx);
+    }
+
+    fn start_share(&mut self, folder: &Path) {
+        match self.core.start_share(folder) {
+            Ok(()) => self.status.clear(),
+            Err(e) => {
+                self.error = true;
+                self.status = format!("Couldn't share the folder: {e}");
+            }
+        }
+    }
+
     fn poll(&mut self, ctx: &egui::Context) {
+        if let Some(rx) = &self.picking
+            && let Ok(picked) = rx.try_recv()
+        {
+            self.picking = None;
+            match picked {
+                Ok(Some(folder)) => self.start_share(&folder),
+                Ok(None) => {}
+                Err(e) => {
+                    self.error = true;
+                    self.status = e;
+                }
+            }
+        }
         let title = match (&self.device, &self.now) {
             (Some(dev), Some(now)) => format!("{} · {} — Roku Remote", now.app, dev.name),
             _ => "Roku Remote".into(),
@@ -440,6 +494,163 @@ impl Remote {
         });
     }
 
+    fn share(&mut self, ui: &mut egui::Ui) {
+        let (share, firewall, media_player, seen) = {
+            let st = self.core.state.lock().unwrap();
+            let host = self.device.as_ref().map(|d| d.host.as_str()).unwrap_or_default();
+            let seen = st.share.as_ref().and_then(|s| s.last_seen(host));
+            (st.share.clone(), st.firewall.clone(), st.media_player, seen)
+        };
+        let small = |t: &str| egui::RichText::new(t).small();
+        let weak = |t: &str| egui::RichText::new(t).small().color(look::WEAK);
+        let warn = |t: &str| egui::RichText::new(t).small().color(look::WARN);
+        let button = |t: &str| egui::Button::new(t).min_size(vec2(0.0, 32.0));
+
+        ui.horizontal(|ui| {
+            ui.label(egui::RichText::new("SHARE MEDIA").small().strong().color(look::WEAK));
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                let help = look::text_key(ui, vec2(26.0, 22.0), "?", self.share_help)
+                    .on_hover_text("How sharing works, and what to do if the TV can't see this computer");
+                if help.clicked() {
+                    self.share_help = !self.share_help;
+                }
+            });
+        });
+        egui::Frame::new().fill(look::BODY).corner_radius(16).inner_margin(egui::Margin::same(12)).show(ui, |ui| {
+            ui.set_width(ui.available_width());
+            ui.spacing_mut().item_spacing.y = 6.0;
+            match &share {
+                None => {
+                    ui.add(egui::Label::new(weak("Play videos, music and photos from this computer on the TV.")).wrap());
+                    ui.horizontal(|ui| {
+                        let picking = self.picking.is_some();
+                        if ui.add_enabled(!picking, button(if picking { "Choosing…" } else { "Share a folder…" })).clicked() {
+                            self.pick_folder(ui.ctx());
+                        }
+                        if let Some(last) = core::saved_share() {
+                            let name = last.file_name().map_or_else(|| folder_label(&last), |n| n.to_string_lossy().into_owned());
+                            if ui.add(button(&format!("Share “{name}”"))).on_hover_text(folder_label(&last)).clicked() {
+                                self.start_share(&last);
+                            }
+                        }
+                    });
+                }
+                Some(share) => {
+                    ui.horizontal(|ui| {
+                        ui.add(egui::Label::new(egui::RichText::new(format!("Sharing {}", folder_label(share.folder()))).strong()).truncate());
+                    });
+                    ui.horizontal(|ui| {
+                        if ui.add(button("Open on TV")).on_hover_text("Open Roku Media Player on the TV").clicked() {
+                            self.core.open_media_player();
+                        }
+                        if ui.add_enabled(self.picking.is_none(), button("Change…")).clicked() {
+                            self.pick_folder(ui.ctx());
+                        }
+                        if ui.add(button("Stop")).clicked() {
+                            self.core.stop_share();
+                        }
+                    });
+                    let name = share::server_name();
+                    let (dot, line) = match seen {
+                        Some(_) => (look::GOOD, "The TV is connected to the share".to_string()),
+                        None => (look::WEAK, format!("On the TV, open Roku Media Player and choose “{name}”")),
+                    };
+                    ui.horizontal(|ui| {
+                        let (r, _) = ui.allocate_exact_size(vec2(8.0, 8.0), egui::Sense::hover());
+                        ui.painter().circle_filled(r.center(), 4.0, dot);
+                        ui.add(egui::Label::new(small(&line)).wrap());
+                    });
+                    if seen.is_none() {
+                        // Notice the TV connecting without waiting for input.
+                        ui.ctx().request_repaint_after(std::time::Duration::from_secs(1));
+                        if let Some(fw) = &firewall {
+                            ui.add(egui::Label::new(warn(&format!("{} is on and may stop the TV from seeing this computer. Click ? for the fix.", fw.name))).wrap());
+                        }
+                        if !share.announced {
+                            ui.add(egui::Label::new(warn("Another program is using the network discovery port, so the TV may not find this computer.")).wrap());
+                        }
+                    }
+                }
+            }
+            if media_player == Some(false) {
+                ui.add(egui::Label::new(warn("Roku Media Player isn't installed on this TV. Click ? to see how to get it.")).wrap());
+            }
+        });
+
+        if self.share_help {
+            self.share_help(ui, firewall.as_deref(), media_player, seen.is_some());
+        }
+    }
+
+    fn share_help(&mut self, ui: &mut egui::Ui, firewall: Option<&share::Firewall>, media_player: Option<bool>, seen: bool) {
+        let weak = |t: &str| egui::RichText::new(t).small().color(look::WEAK);
+        egui::Frame::new().fill(look::BODY).corner_radius(16).inner_margin(egui::Margin::same(12)).show(ui, |ui| {
+            ui.set_width(ui.available_width());
+            ui.spacing_mut().item_spacing.y = 6.0;
+            let step = |ui: &mut egui::Ui, n: &str, title: &str, body: &str| {
+                ui.horizontal_top(|ui| {
+                    ui.label(egui::RichText::new(n).strong().color(look::ACCENT));
+                    ui.vertical(|ui| {
+                        ui.label(egui::RichText::new(title).strong());
+                        if !body.is_empty() {
+                            ui.add(egui::Label::new(weak(body)).wrap());
+                        }
+                    });
+                });
+            };
+
+            let (badge, color) = match media_player {
+                Some(true) => ("Installed on this TV ✓", look::GOOD),
+                Some(false) => ("Not installed on this TV", look::WARN),
+                None => ("Couldn't check this TV", look::WEAK),
+            };
+            step(
+                ui,
+                "1",
+                "Get Roku Media Player on the TV",
+                "It's free, made by Roku. On the TV press Home, open Streaming Store (or Search), find                  Roku Media Player and choose Add channel.",
+            );
+            ui.horizontal(|ui| {
+                ui.add_space(18.0);
+                ui.label(egui::RichText::new(badge).small().color(color));
+            });
+            step(ui, "2", "Share a folder", "Click Share a folder… and pick the folder with your videos, music or photos.");
+            step(
+                ui,
+                "3",
+                "Play it on the TV",
+                &format!(
+                    "Roku Media Player opens on the TV. Choose All or Media Servers, then “{}”, and                      browse with the Roku remote.",
+                    share::server_name()
+                ),
+            );
+            ui.add(egui::Label::new(weak("Plays MP4, MKV and MOV video, MP3, AAC, FLAC and WAV music, and JPG, PNG and GIF photos.")).wrap());
+
+            ui.separator();
+            ui.label(egui::RichText::new("If the TV can't see this computer").strong());
+            ui.add(egui::Label::new(weak("Both must be on the same network. A firewall on this computer can also keep the TV out.")).wrap());
+            match firewall {
+                _ if seen => {
+                    ui.label(egui::RichText::new("The TV has connected, so nothing is blocking it ✓").small().color(look::GOOD));
+                }
+                Some(fw) if fw.fix.starts_with("sudo") => {
+                    ui.add(egui::Label::new(egui::RichText::new(format!("{} is on. To let the TV in, run in a terminal:", fw.name)).small().color(look::WARN)).wrap());
+                    let mut fix = fw.fix.clone();
+                    ui.add(egui::TextEdit::multiline(&mut fix).code_editor().desired_rows(2).desired_width(f32::INFINITY));
+                    if ui.small_button("Copy commands").clicked() {
+                        ui.ctx().copy_text(fw.fix.clone());
+                    }
+                }
+                Some(fw) => {
+                    ui.add(egui::Label::new(egui::RichText::new(format!("{} is on. {}", fw.name, fw.fix)).small().color(look::WARN)).wrap());
+                }
+                None => {
+                    ui.label(egui::RichText::new("No firewall found that would block the TV.").small().color(look::GOOD));
+                }
+            }
+        });
+    }
+
     fn channels(&mut self, ui: &mut egui::Ui) {
         ui.label(egui::RichText::new("CHANNELS").small().strong().color(look::WEAK));
         if self.apps.is_empty() {
@@ -588,6 +799,8 @@ impl Remote {
                             });
                         ui.add_space(4.0);
                         self.search(ui);
+                        ui.add_space(4.0);
+                        self.share(ui);
                         ui.add_space(4.0);
                         self.channels(ui);
                     });
