@@ -9,9 +9,9 @@ use socket2::{Domain, Protocol, Socket, Type};
 use std::collections::HashMap;
 use std::fs;
 use std::io::{self, BufRead, BufReader, Read, Seek, SeekFrom, Write};
-use std::net::{Ipv4Addr, SocketAddr, SocketAddrV4, TcpListener, TcpStream, UdpSocket};
+use std::net::{IpAddr, Ipv4Addr, SocketAddr, SocketAddrV4, TcpListener, TcpStream, UdpSocket};
 use std::path::{Component, Path, PathBuf};
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
@@ -23,6 +23,12 @@ const PORTS: std::ops::RangeInclusive<u16> = 8200..=8209;
 const DEVICE: &str = "urn:schemas-upnp-org:device:MediaServer:1";
 const CD: &str = "urn:schemas-upnp-org:service:ContentDirectory:1";
 const CM: &str = "urn:schemas-upnp-org:service:ConnectionManager:1";
+/// Connections served at once. A TV uses a handful; more is someone
+/// trying to tie the computer up.
+const MAX_CONNECTIONS: usize = 32;
+/// Longest request or header line, and most headers, we'll read.
+const MAX_LINE: usize = 8 * 1024;
+const MAX_HEADERS: usize = 64;
 
 pub struct Share {
     server: Arc<Server>,
@@ -38,6 +44,7 @@ struct Server {
     uuid: String,
     name: String,
     stop: AtomicBool,
+    connections: AtomicUsize,
     /// When each address last talked to us over HTTP.
     seen: Mutex<HashMap<String, Instant>>,
 }
@@ -59,6 +66,7 @@ impl Share {
             base: format!("http://{ip}:{port}"),
             root,
             stop: AtomicBool::new(false),
+            connections: AtomicUsize::new(0),
             seen: Mutex::default(),
         });
         let s = server.clone();
@@ -68,9 +76,19 @@ impl Share {
                     break;
                 }
                 let Ok(stream) = stream else { continue };
+                // Only devices on the local network; dropping the stream
+                // closes it.
+                if !stream.peer_addr().is_ok_and(|a| is_local(a.ip())) {
+                    continue;
+                }
+                if s.connections.fetch_add(1, Ordering::Relaxed) >= MAX_CONNECTIONS {
+                    s.connections.fetch_sub(1, Ordering::Relaxed);
+                    continue;
+                }
                 let s = s.clone();
                 std::thread::spawn(move || {
                     let _ = s.handle(stream);
+                    s.connections.fetch_sub(1, Ordering::Relaxed);
                 });
             }
         });
@@ -106,6 +124,15 @@ impl Drop for Share {
             }
         }
         let _ = TcpStream::connect_timeout(&SocketAddr::from(([127, 0, 0, 1], self.port)), Duration::from_millis(200));
+    }
+}
+
+/// A private, link-local or loopback address: something on this network,
+/// not the internet. The share and its announcements answer only these.
+fn is_local(ip: IpAddr) -> bool {
+    match ip {
+        IpAddr::V4(v4) => v4.is_private() || v4.is_link_local() || v4.is_loopback(),
+        IpAddr::V6(v6) => v6.is_loopback() || v6.to_ipv4_mapped().is_some_and(|v4| is_local(IpAddr::V4(v4))),
     }
 }
 
@@ -259,6 +286,11 @@ impl Server {
                 next_notify = Instant::now() + Duration::from_secs(60);
             }
             let Ok((n, from)) = sock.recv_from(&mut buf) else { continue };
+            // Answering searches from the internet would make this a
+            // traffic amplifier for attacks on others.
+            if !is_local(from.ip()) {
+                continue;
+            }
             let msg = String::from_utf8_lossy(&buf[..n]);
             if !msg.starts_with("M-SEARCH") {
                 continue;
@@ -289,9 +321,19 @@ struct Request {
     body: String,
 }
 
+/// One line, refusing lines longer than `MAX_LINE` so a client can't make
+/// us buffer without end.
+fn read_line(r: &mut BufReader<TcpStream>, line: &mut String) -> io::Result<usize> {
+    let n = r.by_ref().take(MAX_LINE as u64).read_line(line)?;
+    if n == MAX_LINE && !line.ends_with('\n') {
+        return Err(io::Error::new(io::ErrorKind::InvalidData, "line too long"));
+    }
+    Ok(n)
+}
+
 fn read_request(r: &mut BufReader<TcpStream>) -> io::Result<Option<Request>> {
     let mut line = String::new();
-    if r.read_line(&mut line)? == 0 {
+    if read_line(r, &mut line)? == 0 {
         return Ok(None);
     }
     let mut parts = line.split_whitespace();
@@ -300,8 +342,11 @@ fn read_request(r: &mut BufReader<TcpStream>) -> io::Result<Option<Request>> {
     let mut headers = HashMap::new();
     loop {
         let mut l = String::new();
-        if r.read_line(&mut l)? == 0 || l.trim().is_empty() {
+        if read_line(r, &mut l)? == 0 || l.trim().is_empty() {
             break;
+        }
+        if headers.len() >= MAX_HEADERS {
+            return Err(io::Error::new(io::ErrorKind::InvalidData, "too many headers"));
         }
         if let Some((k, v)) = l.split_once(':') {
             headers.insert(k.trim().to_ascii_lowercase(), v.trim().to_string());
@@ -680,3 +725,29 @@ const CM_SCPD: &str = r#"<?xml version="1.0" encoding="utf-8"?>
 <stateVariable sendEvents="yes"><name>SinkProtocolInfo</name><dataType>string</dataType></stateVariable>
 <stateVariable sendEvents="yes"><name>CurrentConnectionIDs</name><dataType>string</dataType></stateVariable>
 </serviceStateTable></scpd>"#;
+
+#[cfg(test)]
+mod tests {
+    use super::{is_local, parse_range};
+
+    #[test]
+    fn only_local_addresses() {
+        for ip in ["192.168.1.81", "10.0.0.5", "172.16.3.4", "169.254.1.1", "127.0.0.1", "::1", "::ffff:192.168.1.81"] {
+            assert!(is_local(ip.parse().unwrap()), "{ip}");
+        }
+        for ip in ["8.8.8.8", "1.2.3.4", "172.32.0.1", "2001:db8::1", "::ffff:8.8.8.8"] {
+            assert!(!is_local(ip.parse().unwrap()), "{ip}");
+        }
+    }
+
+    #[test]
+    fn ranges() {
+        assert_eq!(parse_range("bytes=0-9", 100), Some((0, 9)));
+        assert_eq!(parse_range("bytes=90-", 100), Some((90, 99)));
+        assert_eq!(parse_range("bytes=-10", 100), Some((90, 99)));
+        assert_eq!(parse_range("bytes=50-500", 100), Some((50, 99)));
+        assert_eq!(parse_range("bytes=100-", 100), None);
+        assert_eq!(parse_range("bytes=9-0", 100), None);
+        assert_eq!(parse_range("bytes=0-0", 0), None);
+    }
+}

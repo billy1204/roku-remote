@@ -4,6 +4,7 @@ use std::net::{SocketAddr, TcpStream, ToSocketAddrs, UdpSocket};
 use std::time::{Duration, Instant};
 
 const TIMEOUT: Duration = Duration::from_secs(3);
+const MAX_RESPONSE: u64 = 8 * 1024 * 1024;
 
 #[derive(Clone, Debug)]
 pub struct Device {
@@ -42,8 +43,13 @@ fn request_bytes(host: &str, method: &str, path: &str) -> Result<Vec<u8>, String
         "{method} {path} HTTP/1.1\r\nHost: {sock}\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
     );
     stream.write_all(req.as_bytes()).map_err(|e| e.to_string())?;
+    // Real replies are a few kB (logos up to ~100 kB); cap them so a device
+    // posing as a Roku can't make us read without end.
     let mut buf = Vec::new();
-    stream.read_to_end(&mut buf).map_err(|e| e.to_string())?;
+    stream.take(MAX_RESPONSE + 1).read_to_end(&mut buf).map_err(|e| e.to_string())?;
+    if buf.len() as u64 > MAX_RESPONSE {
+        return Err(format!("{host}: reply too large"));
+    }
     let head_end = buf.windows(4).position(|w| w == b"\r\n\r\n");
     let head = String::from_utf8_lossy(&buf[..head_end.unwrap_or(buf.len())]);
     let status: u16 = head.split_whitespace().nth(1).and_then(|s| s.parse().ok()).unwrap_or(0);
