@@ -49,6 +49,7 @@ struct Remote {
     icons: HashMap<String, Arc<[u8]>>,
     now: Option<ecp::Playing>,
     text: String,
+    youtube: String,
     status: String,
     error: bool,
     busy: bool,
@@ -86,6 +87,7 @@ impl Remote {
             icons: HashMap::new(),
             now: None,
             text: String::new(),
+            youtube: String::new(),
             status: String::new(),
             error: false,
             busy: false,
@@ -494,6 +496,40 @@ impl Remote {
         });
     }
 
+    fn youtube(&mut self, ui: &mut egui::Ui) {
+        ui.label(egui::RichText::new("YOUTUBE").small().strong().color(look::WEAK));
+        ui.horizontal(|ui| {
+            let edit = ui.add(
+                egui::TextEdit::singleline(&mut self.youtube)
+                    .hint_text("Paste a YouTube link to play it on the TV…")
+                    .margin(egui::Margin::symmetric(12, 9))
+                    .desired_width(ui.available_width() - 44.0 - ui.spacing().item_spacing.x),
+            );
+            let enter = edit.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
+            let play = look::icon_key(ui, Vec2::splat(38.0), Icon::PlayOnly, false, Some(look::ACCENT)).on_hover_text("Play on the TV");
+            if (play.clicked() || enter) && !self.youtube.trim().is_empty() {
+                self.play_youtube();
+            }
+        });
+    }
+
+    fn play_youtube(&mut self) {
+        let Some(dev) = &self.device else { return };
+        self.error = true;
+        let Some(id) = ecp::youtube_id(&self.youtube) else {
+            self.status = "That isn't a YouTube video link. Copy the link from the video's Share button.".into();
+            return;
+        };
+        if !self.apps.is_empty() && !self.apps.iter().any(|a| a.id == ecp::YOUTUBE) {
+            self.status = "YouTube isn't installed on this TV. Add it from the TV's Streaming Store.".into();
+            return;
+        }
+        let _ = self.core.cmd.send(Cmd::YouTube(dev.host.clone(), id));
+        self.error = false;
+        self.status = "Opening the video on YouTube…".into();
+        self.youtube.clear();
+    }
+
     fn share(&mut self, ui: &mut egui::Ui) {
         let (share, firewall, media_player, seen) = {
             let st = self.core.state.lock().unwrap();
@@ -799,6 +835,8 @@ impl Remote {
                             });
                         ui.add_space(4.0);
                         self.search(ui);
+                        ui.add_space(4.0);
+                        self.youtube(ui);
                         ui.add_space(4.0);
                         self.share(ui);
                         ui.add_space(4.0);

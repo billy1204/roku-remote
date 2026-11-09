@@ -12,6 +12,7 @@ A small desktop remote for Roku TVs and streaming players on your home network, 
 - **Type into search boxes** from your keyboard instead of the on-screen keyboard.
 - **Channel launcher:** a button for every installed channel.
 - **Now playing:** the current channel, play state and progress, in the window and the title bar.
+- **Play YouTube links:** paste a YouTube link (watch, youtu.be, Shorts or live) and the TV's YouTube channel opens and plays it.
 - **Share media:** pick a folder and play its videos, music and photos on the TV with Roku's free **Roku Media Player** channel. The **?** button explains the setup, checks that Media Player is on the TV and warns if a firewall may keep the TV out.
 - **Linux desktop integration:**
   - **Tray icon:** play/pause, volume, mute, power and switching TVs without opening the window. Scroll on the icon to change the volume; click it to show or hide the remote. Closing the window keeps the remote in the tray.

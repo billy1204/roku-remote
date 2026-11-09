@@ -14,6 +14,8 @@ pub enum Cmd {
     Key(String, &'static str),
     Text(String, String),
     Launch(String, String),
+    /// Play a YouTube video (by id) in the TV's YouTube channel.
+    YouTube(String, String),
 }
 
 pub enum Event {
@@ -211,6 +213,7 @@ impl Core {
                 Cmd::Key(host, key) => ecp::keypress(&host, key).map_or_else(Event::Error, |_| Event::Ok),
                 Cmd::Text(host, text) => ecp::type_text(&host, &text).map_or_else(Event::Error, |_| Event::Ok),
                 Cmd::Launch(host, id) => ecp::launch(&host, &id).map_or_else(Event::Error, |_| Event::Ok),
+                Cmd::YouTube(host, id) => ecp::play_youtube(&host, &id).map_or_else(Event::Error, |_| Event::Ok),
             };
             if ev_tx.send(ev).is_err() {
                 break;

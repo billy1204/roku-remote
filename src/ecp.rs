@@ -78,6 +78,39 @@ pub fn launch(host: &str, id: &str) -> Result<(), String> {
     request(host, "POST", &format!("/launch/{id}")).map(drop)
 }
 
+/// YouTube's channel id.
+pub const YOUTUBE: &str = "837";
+
+/// Open YouTube on the TV and play a video.
+pub fn play_youtube(host: &str, video: &str) -> Result<(), String> {
+    request(host, "POST", &format!("/launch/{YOUTUBE}?contentId={video}&mediaType=movie")).map(drop)
+}
+
+/// The video id in a YouTube link (watch, youtu.be, shorts, live, embed,
+/// music), or a bare id.
+pub fn youtube_id(link: &str) -> Option<String> {
+    let valid = |id: &str| id.len() == 11 && id.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_');
+    let link = link.trim();
+    if valid(link) {
+        return Some(link.to_string());
+    }
+    let rest = link.split_once("://").map_or(link, |(_, r)| r);
+    let (host, path) = rest.split_once('/').unwrap_or((rest, ""));
+    let host = host.trim_start_matches("www.").trim_start_matches("m.").trim_start_matches("music.");
+    let (path, query) = path.split_once('?').unwrap_or((path, ""));
+    let path = path.split('#').next().unwrap_or_default();
+    let id = match host {
+        "youtu.be" => path.split('/').next(),
+        "youtube.com" | "youtube-nocookie.com" => match path.split('/').collect::<Vec<_>>().as_slice() {
+            ["watch", ..] => query.split('&').find_map(|kv| kv.strip_prefix("v=")),
+            ["shorts" | "live" | "embed" | "v", id, ..] => Some(*id),
+            _ => None,
+        },
+        _ => None,
+    }?;
+    valid(id).then(|| id.to_string())
+}
+
 /// A channel's logo (WebP, PNG or JPEG).
 pub fn icon(host: &str, id: &str) -> Result<Vec<u8>, String> {
     request_bytes(host, "GET", &format!("/query/icon/{id}"))
@@ -200,4 +233,33 @@ pub fn now_playing(host: &str) -> Result<Playing, String> {
         }
     }
     Ok(now)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::youtube_id;
+
+    #[test]
+    fn youtube_links() {
+        let id = Some("jNQXAC9IVRw".to_string());
+        for link in [
+            "jNQXAC9IVRw",
+            "https://www.youtube.com/watch?v=jNQXAC9IVRw",
+            "https://youtube.com/watch?feature=share&v=jNQXAC9IVRw&t=4s",
+            "youtube.com/watch?v=jNQXAC9IVRw",
+            "https://m.youtube.com/watch?v=jNQXAC9IVRw",
+            "https://music.youtube.com/watch?v=jNQXAC9IVRw&list=RD",
+            "https://youtu.be/jNQXAC9IVRw",
+            "https://youtu.be/jNQXAC9IVRw?si=abc123",
+            "https://www.youtube.com/shorts/jNQXAC9IVRw",
+            "https://www.youtube.com/live/jNQXAC9IVRw?feature=shared",
+            "https://www.youtube.com/embed/jNQXAC9IVRw",
+            "  https://youtu.be/jNQXAC9IVRw  ",
+        ] {
+            assert_eq!(youtube_id(link), id, "{link}");
+        }
+        for link in ["", "hello", "https://example.com/watch?v=jNQXAC9IVRw", "https://www.youtube.com/@channel", "https://youtu.be/short"] {
+            assert_eq!(youtube_id(link), None, "{link}");
+        }
+    }
 }
