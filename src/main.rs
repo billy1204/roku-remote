@@ -858,6 +858,27 @@ impl Remote {
     }
 }
 
+/// Who made this and whose it isn't, with the open-source notices.
+fn about(ui: &mut egui::Ui) {
+    const REPO: &str = "https://github.com/billy1204/roku-remote";
+    let version = env!("CARGO_PKG_VERSION");
+    let weak = |t: &str| egui::RichText::new(t).small().color(look::WEAK);
+    ui.vertical_centered(|ui| {
+        ui.spacing_mut().item_spacing.y = 2.0;
+        ui.label(weak(&format!("Roku Remote {version} · unofficial")));
+        ui.label(weak("Not affiliated with or endorsed by Roku, Inc."));
+        ui.horizontal(|ui| {
+            let links = [("Website", REPO.to_string()), ("Open-source licenses", format!("{REPO}/blob/v{version}/THIRD-PARTY-LICENSES.md"))];
+            let w: f32 = links.iter().map(|(t, _)| t.len() as f32 * 6.2).sum::<f32>() + 24.0;
+            ui.add_space(((ui.available_width() - w) / 2.0).max(0.0));
+            for (text, url) in links {
+                ui.hyperlink_to(egui::RichText::new(text).small(), url);
+            }
+        });
+    });
+    ui.add_space(6.0);
+}
+
 /// The window's view of the long-lived `Remote`, which survives the window
 /// closing to the tray and reopening.
 struct Window(Rc<RefCell<Remote>>);
@@ -917,6 +938,8 @@ impl Remote {
                         ui.add_space(4.0);
                         self.channels(ui);
                     });
+                    ui.add_space(14.0);
+                    about(ui);
                 });
             });
     }

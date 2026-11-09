@@ -2,6 +2,8 @@
 
 A small desktop remote for Roku TVs and streaming players on your home network, for Linux (AppImage) and Windows (.exe). Written in Rust with [egui](https://github.com/emilk/egui).
 
+> **Unofficial.** This is an independent project, not affiliated with, endorsed by or sponsored by Roku, Inc. Roku is a trademark of Roku, Inc.; YouTube is a trademark of Google LLC.
+
 <img src="assets/icon.svg" width="64" alt="Roku Remote icon">
 
 ## Features
@@ -70,6 +72,8 @@ cargo run --release                       # run directly
 APPIMAGETOOL=/path/to/appimagetool packaging/build_appimage.sh   # build the AppImage
 ```
 
+After changing dependencies, run `packaging/licenses.sh` (needs `cargo install cargo-about --locked --features cli`) to regenerate [THIRD-PARTY-LICENSES.md](THIRD-PARTY-LICENSES.md).
+
 On Windows, `cargo build --release` produces `target\release\roku-remote.exe`. Publishing a GitHub release also builds the `.exe` and attaches it automatically ([workflow](.github/workflows/windows.yml)).
 
 ## How it works
@@ -78,4 +82,6 @@ It uses Roku's [External Control Protocol](https://developer.roku.com/docs/devel
 
 ## License
 
-[MIT](LICENSE)
+[MIT](LICENSE). The app includes open-source libraries and fonts under their own licenses; their notices are in [THIRD-PARTY-LICENSES.md](THIRD-PARTY-LICENSES.md), which also ships inside the AppImage and with each release.
+
+Roku is a trademark of Roku, Inc., and YouTube a trademark of Google LLC, used here only to say what the app works with. This project is not affiliated with or endorsed by either company.

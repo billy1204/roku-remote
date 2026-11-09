@@ -29,7 +29,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           cp target/release/roku-remote.exe Roku-Remote-windows-x86_64.exe
-          gh release upload "$TAG" Roku-Remote-windows-x86_64.exe --clobber
+          gh release upload "$TAG" Roku-Remote-windows-x86_64.exe THIRD-PARTY-LICENSES.md --clobber
       - uses: actions/upload-artifact@v4
         with:
           name: Roku-Remote-windows-x86_64
