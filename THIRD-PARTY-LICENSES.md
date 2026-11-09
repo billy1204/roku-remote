@@ -3519,7 +3519,7 @@ SOFTWARE.
 ```
 ### MIT License
 
-Used by: roku-remote 0.6.2
+Used by: roku-remote 0.6.3
 
 ```text
 MIT License
