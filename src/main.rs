@@ -58,6 +58,7 @@ struct Remote {
     /// The folder picker, while it's open.
     picking: Option<Receiver<Result<Option<PathBuf>, String>>>,
     share_help: bool,
+    youtube_help: bool,
     /// Dev aid: save a screenshot here once the window has settled, then quit.
     screenshot: Option<(PathBuf, u32)>,
 }
@@ -94,6 +95,7 @@ impl Remote {
             flash: None,
             picking: None,
             share_help: false,
+            youtube_help: false,
             screenshot: std::env::var_os("ROKU_REMOTE_SCREENSHOT").map(|p| (PathBuf::from(p), 0)),
         };
         // Reconnect before searching: the worker runs commands in order, so
@@ -497,11 +499,36 @@ impl Remote {
     }
 
     fn youtube(&mut self, ui: &mut egui::Ui) {
-        ui.label(egui::RichText::new("YOUTUBE").small().strong().color(look::WEAK));
+        ui.horizontal(|ui| {
+            ui.label(egui::RichText::new("YOUTUBE").small().strong().color(look::WEAK));
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                let help = look::text_key(ui, vec2(26.0, 22.0), "?", self.youtube_help).on_hover_text("How to paste a link");
+                if help.clicked() {
+                    self.youtube_help = !self.youtube_help;
+                }
+            });
+        });
+        if self.youtube_help {
+            let weak = |t: &str| egui::RichText::new(t).small().color(look::WEAK);
+            egui::Frame::new().fill(look::BODY).corner_radius(16).inner_margin(egui::Margin::same(12)).show(ui, |ui| {
+                ui.set_width(ui.available_width());
+                ui.spacing_mut().item_spacing.y = 6.0;
+                ui.label(egui::RichText::new("Pasting a link").strong());
+                ui.add(
+                    egui::Label::new(weak(
+                        "Copy the video's link (in a browser, from the address bar; in the YouTube app, Share > Copy link). \
+                         Then click the box below and press Ctrl+V to paste it.",
+                    ))
+                    .wrap(),
+                );
+                ui.add(egui::Label::new(egui::RichText::new("Right-click Paste doesn't work in this box. Use Ctrl+V.").small().color(look::WARN)).wrap());
+                ui.add(egui::Label::new(weak("Then press Enter or the play button, and the video plays in YouTube on the TV.")).wrap());
+            });
+        }
         ui.horizontal(|ui| {
             let edit = ui.add(
                 egui::TextEdit::singleline(&mut self.youtube)
-                    .hint_text("Paste a YouTube link to play it on the TV…")
+                    .hint_text("Paste a YouTube link (Ctrl+V)…")
                     .margin(egui::Margin::symmetric(12, 9))
                     .desired_width(ui.available_width() - 44.0 - ui.spacing().item_spacing.x),
             );
