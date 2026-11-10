@@ -279,6 +279,16 @@ pub fn saved_host() -> Option<String> {
     saved("host")
 }
 
+/// The theme and whether keys animate, as last chosen.
+pub fn saved_appearance() -> (Option<String>, bool) {
+    (saved("theme"), saved("animate").as_deref() != Some("off"))
+}
+
+pub fn save_appearance(theme: &str, animate: bool) {
+    save("theme", theme);
+    save("animate", if animate { "on" } else { "off" });
+}
+
 /// The folder shared last, if it still exists.
 pub fn saved_share() -> Option<PathBuf> {
     saved("share").map(PathBuf::from).filter(|p| p.is_dir())

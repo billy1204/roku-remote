@@ -60,6 +60,7 @@ struct Remote {
     share_help: bool,
     youtube_help: bool,
     connect_help: bool,
+    appearance: bool,
     /// Dev aid: save a screenshot here once the window has settled, then quit.
     screenshot: Option<(PathBuf, u32)>,
 }
@@ -98,6 +99,7 @@ impl Remote {
             share_help: false,
             youtube_help: false,
             connect_help: false,
+            appearance: std::env::var_os("ROKU_REMOTE_APPEARANCE").is_some(),
             screenshot: std::env::var_os("ROKU_REMOTE_SCREENSHOT").map(|p| (PathBuf::from(p), 0)),
         };
         // Reconnect before searching: the worker runs commands in order, so
@@ -280,7 +282,7 @@ impl Remote {
     fn header(&mut self, ui: &mut egui::Ui) {
         ui.horizontal(|ui| {
             let name = self.device.as_ref().map_or("Roku Remote".to_string(), |d| d.name.clone());
-            let menu_w = ui.available_width() - 2.0 * (38.0 + ui.spacing().item_spacing.x);
+            let menu_w = ui.available_width() - 3.0 * (38.0 + ui.spacing().item_spacing.x);
             let mut pick = None;
             let combo = egui::ComboBox::from_id_salt("device")
                 .selected_text(
@@ -316,6 +318,12 @@ impl Remote {
             let help = look::text_key(ui, Vec2::splat(38.0), "?", self.connect_help).on_hover_text("TV not responding?");
             if help.clicked() {
                 self.connect_help = !self.connect_help;
+                self.appearance = false;
+            }
+            let look = look::icon_key(ui, Vec2::splat(38.0), Icon::Appearance, self.appearance, None).on_hover_text("Appearance");
+            if look.clicked() {
+                self.appearance = !self.appearance;
+                self.connect_help = false;
             }
         });
         ui.add_space(-4.0);
@@ -323,13 +331,13 @@ impl Remote {
             let (dot, sub) = match &self.device {
                 Some(d) if d.limited => (look::WARN, format!("{}  ·  volume only", d.host)),
                 Some(d) => (look::GOOD, format!("{}  ·  connected", d.host)),
-                None if self.busy => (look::WEAK, "searching…".into()),
-                None => (look::WEAK, "not connected".into()),
+                None if self.busy => (look::pal().weak, "searching…".into()),
+                None => (look::pal().weak, "not connected".into()),
             };
             ui.add_space(4.0);
             let (r, _) = ui.allocate_exact_size(vec2(8.0, 8.0), egui::Sense::hover());
             ui.painter().circle_filled(r.center(), 4.0, dot);
-            ui.label(egui::RichText::new(sub).small().color(look::WEAK));
+            ui.label(egui::RichText::new(sub).small().color(look::pal().weak));
         });
         if self.show_ip || (self.device.is_none() && !self.busy && self.found.is_empty()) {
             ui.horizontal(|ui| {
@@ -350,12 +358,15 @@ impl Remote {
         if self.connect_help {
             self.connect_help(ui);
         }
+        if self.appearance {
+            appearance(ui);
+        }
     }
 
     fn connect_help(&self, ui: &mut egui::Ui) {
-        let weak = |t: &str| egui::RichText::new(t).small().color(look::WEAK);
+        let weak = |t: &str| egui::RichText::new(t).small().color(look::pal().weak);
         ui.add_space(6.0);
-        egui::Frame::new().fill(look::BODY).corner_radius(16).inner_margin(egui::Margin::same(12)).show(ui, |ui| {
+        egui::Frame::new().fill(look::pal().body).corner_radius(16).inner_margin(egui::Margin::same(12)).show(ui, |ui| {
             ui.set_width(ui.available_width());
             ui.spacing_mut().item_spacing.y = 6.0;
             ui.label(egui::RichText::new("TV not responding?").strong());
@@ -374,7 +385,7 @@ impl Remote {
                 ("5", "Network access: choose Enabled"),
             ] {
                 ui.horizontal(|ui| {
-                    ui.label(egui::RichText::new(n).strong().color(look::ACCENT));
+                    ui.label(egui::RichText::new(n).strong().color(look::pal().accent));
                     ui.label(egui::RichText::new(step).small());
                 });
             }
@@ -475,18 +486,18 @@ impl Remote {
             let s = ms / 1000;
             if s >= 3600 { format!("{}:{:02}:{:02}", s / 3600, s / 60 % 60, s % 60) } else { format!("{}:{:02}", s / 60, s % 60) }
         }
-        egui::Frame::new().fill(look::BODY).corner_radius(16).inner_margin(egui::Margin::same(10)).show(ui, |ui| {
+        egui::Frame::new().fill(look::pal().body).corner_radius(16).inner_margin(egui::Margin::same(10)).show(ui, |ui| {
             ui.set_width(ui.available_width());
             ui.horizontal(|ui| {
                 let (art, _) = ui.allocate_exact_size(vec2(64.0, 48.0), egui::Sense::hover());
-                ui.painter().rect_filled(art, 8.0, look::KEY);
+                ui.painter().rect_filled(art, 8.0, look::pal().key);
                 match self.icons.get(&now.app_id) {
                     Some(bytes) => {
                         egui::Image::from_bytes(format!("bytes://channel/{}.img", now.app_id), egui::load::Bytes::Shared(bytes.clone()))
                             .corner_radius(8)
                             .paint_at(ui, art);
                     }
-                    None => look::paint_icon(ui.painter(), art.shrink(12.0), Icon::Home, look::WEAK),
+                    None => look::paint_icon(ui.painter(), art.shrink(12.0), Icon::Home, look::pal().weak),
                 }
                 let play_w = 40.0;
                 let text_w = ui.available_width() - play_w - ui.spacing().item_spacing.x;
@@ -506,14 +517,14 @@ impl Remote {
                     } else {
                         state.to_string()
                     };
-                    ui.label(egui::RichText::new(line).small().color(look::WEAK));
+                    ui.label(egui::RichText::new(line).small().color(look::pal().weak));
                     if now.duration_ms > 0 {
                         let (bar, _) = ui.allocate_exact_size(vec2(text_w, 4.0), egui::Sense::hover());
-                        ui.painter().rect_filled(bar, 2.0, look::KEY);
+                        ui.painter().rect_filled(bar, 2.0, look::pal().key);
                         let done = (now.position_ms as f32 / now.duration_ms as f32).clamp(0.0, 1.0);
                         let mut fill = bar;
                         fill.set_width(bar.width() * done);
-                        ui.painter().rect_filled(fill, 2.0, look::ACCENT);
+                        ui.painter().rect_filled(fill, 2.0, look::pal().accent);
                     }
                 });
                 if now.state != ecp::State::Stopped {
@@ -536,7 +547,7 @@ impl Remote {
                     .desired_width(ui.available_width() - 44.0 - ui.spacing().item_spacing.x),
             );
             let enter = edit.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
-            let send = look::icon_key(ui, Vec2::splat(38.0), Icon::Send, false, Some(look::ACCENT)).on_hover_text("Send text");
+            let send = look::icon_key(ui, Vec2::splat(38.0), Icon::Send, false, Some(look::pal().accent)).on_hover_text("Send text");
             if (send.clicked() || enter)
                 && !self.text.is_empty()
                 && let Some(dev) = &self.device
@@ -548,7 +559,7 @@ impl Remote {
 
     fn youtube(&mut self, ui: &mut egui::Ui) {
         ui.horizontal(|ui| {
-            ui.label(egui::RichText::new("YOUTUBE").small().strong().color(look::WEAK));
+            ui.label(egui::RichText::new("YOUTUBE").small().strong().color(look::pal().weak));
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 let help = look::text_key(ui, vec2(26.0, 22.0), "?", self.youtube_help).on_hover_text("How to paste a link");
                 if help.clicked() {
@@ -557,8 +568,8 @@ impl Remote {
             });
         });
         if self.youtube_help {
-            let weak = |t: &str| egui::RichText::new(t).small().color(look::WEAK);
-            egui::Frame::new().fill(look::BODY).corner_radius(16).inner_margin(egui::Margin::same(12)).show(ui, |ui| {
+            let weak = |t: &str| egui::RichText::new(t).small().color(look::pal().weak);
+            egui::Frame::new().fill(look::pal().body).corner_radius(16).inner_margin(egui::Margin::same(12)).show(ui, |ui| {
                 ui.set_width(ui.available_width());
                 ui.spacing_mut().item_spacing.y = 6.0;
                 ui.label(egui::RichText::new("Pasting a link").strong());
@@ -581,7 +592,7 @@ impl Remote {
                     .desired_width(ui.available_width() - 44.0 - ui.spacing().item_spacing.x),
             );
             let enter = edit.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
-            let play = look::icon_key(ui, Vec2::splat(38.0), Icon::PlayOnly, false, Some(look::ACCENT)).on_hover_text("Play on the TV");
+            let play = look::icon_key(ui, Vec2::splat(38.0), Icon::PlayOnly, false, Some(look::pal().accent)).on_hover_text("Play on the TV");
             if (play.clicked() || enter) && !self.youtube.trim().is_empty() {
                 self.play_youtube();
             }
@@ -613,12 +624,12 @@ impl Remote {
             (st.share.clone(), st.firewall.clone(), st.media_player, seen)
         };
         let small = |t: &str| egui::RichText::new(t).small();
-        let weak = |t: &str| egui::RichText::new(t).small().color(look::WEAK);
+        let weak = |t: &str| egui::RichText::new(t).small().color(look::pal().weak);
         let warn = |t: &str| egui::RichText::new(t).small().color(look::WARN);
         let button = |t: &str| egui::Button::new(t).min_size(vec2(0.0, 32.0));
 
         ui.horizontal(|ui| {
-            ui.label(egui::RichText::new("SHARE MEDIA").small().strong().color(look::WEAK));
+            ui.label(egui::RichText::new("SHARE MEDIA").small().strong().color(look::pal().weak));
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 let help = look::text_key(ui, vec2(26.0, 22.0), "?", self.share_help)
                     .on_hover_text("How sharing works, and what to do if the TV can't see this computer");
@@ -627,7 +638,7 @@ impl Remote {
                 }
             });
         });
-        egui::Frame::new().fill(look::BODY).corner_radius(16).inner_margin(egui::Margin::same(12)).show(ui, |ui| {
+        egui::Frame::new().fill(look::pal().body).corner_radius(16).inner_margin(egui::Margin::same(12)).show(ui, |ui| {
             ui.set_width(ui.available_width());
             ui.spacing_mut().item_spacing.y = 6.0;
             match &share {
@@ -664,7 +675,7 @@ impl Remote {
                     let name = share::server_name();
                     let (dot, line) = match seen {
                         Some(_) => (look::GOOD, "The TV is connected to the share".to_string()),
-                        None => (look::WEAK, format!("On the TV, open Roku Media Player and choose “{name}”")),
+                        None => (look::pal().weak, format!("On the TV, open Roku Media Player and choose “{name}”")),
                     };
                     ui.horizontal(|ui| {
                         let (r, _) = ui.allocate_exact_size(vec2(8.0, 8.0), egui::Sense::hover());
@@ -694,13 +705,13 @@ impl Remote {
     }
 
     fn share_help(&mut self, ui: &mut egui::Ui, firewall: Option<&share::Firewall>, media_player: Option<bool>, seen: bool) {
-        let weak = |t: &str| egui::RichText::new(t).small().color(look::WEAK);
-        egui::Frame::new().fill(look::BODY).corner_radius(16).inner_margin(egui::Margin::same(12)).show(ui, |ui| {
+        let weak = |t: &str| egui::RichText::new(t).small().color(look::pal().weak);
+        egui::Frame::new().fill(look::pal().body).corner_radius(16).inner_margin(egui::Margin::same(12)).show(ui, |ui| {
             ui.set_width(ui.available_width());
             ui.spacing_mut().item_spacing.y = 6.0;
             let step = |ui: &mut egui::Ui, n: &str, title: &str, body: &str| {
                 ui.horizontal_top(|ui| {
-                    ui.label(egui::RichText::new(n).strong().color(look::ACCENT));
+                    ui.label(egui::RichText::new(n).strong().color(look::pal().accent));
                     ui.vertical(|ui| {
                         ui.label(egui::RichText::new(title).strong());
                         if !body.is_empty() {
@@ -713,7 +724,7 @@ impl Remote {
             let (badge, color) = match media_player {
                 Some(true) => ("Installed on this TV ✓", look::GOOD),
                 Some(false) => ("Not installed on this TV", look::WARN),
-                None => ("Couldn't check this TV", look::WEAK),
+                None => ("Couldn't check this TV", look::pal().weak),
             };
             step(
                 ui,
@@ -763,7 +774,7 @@ impl Remote {
     }
 
     fn channels(&mut self, ui: &mut egui::Ui) {
-        ui.label(egui::RichText::new("CHANNELS").small().strong().color(look::WEAK));
+        ui.label(egui::RichText::new("CHANNELS").small().strong().color(look::pal().weak));
         if self.apps.is_empty() {
             ui.add(
                 egui::Label::new(
@@ -772,7 +783,7 @@ impl Remote {
                          Advanced system settings > Control by mobile apps to Enabled.",
                     )
                     .small()
-                    .color(look::WEAK),
+                    .color(look::pal().weak),
                 )
                 .wrap(),
             );
@@ -791,10 +802,11 @@ impl Remote {
                     let (rect, resp) = ui.allocate_exact_size(vec2(tw, th), egui::Sense::click());
                     let resp = resp.on_hover_text(&app.name).on_hover_cursor(egui::CursorIcon::PointingHand);
                     let p = ui.painter();
-                    let lift = if resp.hovered() { -2.0 } else { 0.0 };
+                    let hover = if look::animated() { ui.ctx().animate_bool_with_time(resp.id, resp.hovered(), 0.15) } else { resp.hovered() as u8 as f32 };
+                    let lift = -3.0 * hover;
                     let r = rect.translate(vec2(0.0, lift));
                     p.rect_filled(rect.translate(vec2(0.0, 3.0)), 10.0, egui::Color32::from_black_alpha(90));
-                    p.rect_filled(r, 10.0, look::KEY);
+                    p.rect_filled(r, 10.0, look::pal().key);
                     match self.icons.get(&app.id) {
                         Some(bytes) => {
                             egui::Image::from_bytes(format!("bytes://channel/{}.img", app.id), egui::load::Bytes::Shared(bytes.clone()))
@@ -802,14 +814,14 @@ impl Remote {
                                 .paint_at(ui, r);
                         }
                         None => {
-                            let galley = ui.painter().layout(app.name.clone(), egui::FontId::proportional(13.0), look::TEXT, tw - 12.0);
-                            ui.painter().galley(r.center() - galley.size() / 2.0, galley, look::TEXT);
+                            let galley = ui.painter().layout(app.name.clone(), egui::FontId::proportional(13.0), look::pal().text, tw - 12.0);
+                            ui.painter().galley(r.center() - galley.size() / 2.0, galley, look::pal().text);
                         }
                     }
                     let ring = if resp.is_pointer_button_down_on() {
-                        Some(egui::Stroke::new(3.0, look::ACCENT))
-                    } else if resp.hovered() {
-                        Some(egui::Stroke::new(2.0, look::ACCENT_SOFT))
+                        Some(egui::Stroke::new(3.0, look::pal().accent))
+                    } else if hover > 0.0 {
+                        Some(egui::Stroke::new(2.0, look::pal().accent_soft.gamma_multiply(hover)))
                     } else {
                         None
                     };
@@ -858,11 +870,52 @@ impl Remote {
     }
 }
 
+/// Animated keys on or off, and the color theme.
+fn appearance(ui: &mut egui::Ui) {
+    let weak = |t: &str| egui::RichText::new(t).small().color(look::pal().weak);
+    ui.add_space(6.0);
+    egui::Frame::new().fill(look::pal().body).corner_radius(16).inner_margin(egui::Margin::same(12)).show(ui, |ui| {
+        ui.set_width(ui.available_width());
+        ui.spacing_mut().item_spacing.y = 6.0;
+        ui.label(egui::RichText::new("Appearance").strong());
+        let mut animate = look::animated();
+        let mut theme = look::theme();
+        ui.horizontal(|ui| {
+            ui.vertical(|ui| {
+                ui.spacing_mut().item_spacing.y = 2.0;
+                ui.label("Animated buttons");
+                ui.label(weak("Keys fade, press in and ripple when clicked"));
+            });
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                look::toggle(ui, &mut animate).on_hover_text(if animate { "On" } else { "Off" });
+            });
+        });
+        ui.add_space(4.0);
+        ui.horizontal(|ui| {
+            ui.label("Theme");
+            ui.label(weak(look::THEMES[theme].0));
+        });
+        ui.horizontal_wrapped(|ui| {
+            ui.spacing_mut().item_spacing.x = 6.0;
+            for (i, (name, palette)) in look::THEMES.iter().enumerate() {
+                if look::swatch(ui, palette, i == theme).on_hover_text(*name).clicked() {
+                    theme = i;
+                }
+            }
+        });
+        if animate != look::animated() || theme != look::theme() {
+            look::set_animated(animate);
+            look::set_theme(ui.ctx(), theme);
+            core::save_appearance(look::THEMES[theme].0, animate);
+        }
+    });
+}
+
 /// Who made this and whose it isn't, with the open-source notices.
 fn about(ui: &mut egui::Ui) {
     const REPO: &str = "https://github.com/billy1204/roku-remote";
     let version = env!("CARGO_PKG_VERSION");
-    let weak = |t: &str| egui::RichText::new(t).small().color(look::WEAK);
+    let weak = |t: &str| egui::RichText::new(t).small().color(look::pal().weak);
     ui.vertical_centered(|ui| {
         ui.spacing_mut().item_spacing.y = 2.0;
         ui.label(weak(&format!("Roku Remote {version} · unofficial")));
@@ -895,22 +948,22 @@ impl Remote {
         self.shortcuts(ui);
         self.take_screenshot(ui);
         egui::Panel::bottom("status")
-            .frame(egui::Frame::new().fill(look::BODY).inner_margin(egui::Margin::symmetric(14, 8)))
+            .frame(egui::Frame::new().fill(look::pal().body).inner_margin(egui::Margin::symmetric(14, 8)))
             .show(ui, |ui| {
                 ui.horizontal(|ui| {
                     if self.busy {
                         ui.spinner();
                     }
                     if self.status.is_empty() {
-                        ui.label(egui::RichText::new("Arrows · Enter · Backspace · H · Space · +/− · M").small().color(look::WEAK));
+                        ui.label(egui::RichText::new("Arrows · Enter · Backspace · H · Space · +/− · M").small().color(look::pal().weak));
                     } else {
-                        let color = if self.error { look::WARN } else { look::TEXT };
+                        let color = if self.error { look::WARN } else { look::pal().text };
                         ui.add(egui::Label::new(egui::RichText::new(&self.status).small().color(color)).wrap());
                     }
                 });
             });
         egui::CentralPanel::default()
-            .frame(egui::Frame::new().fill(look::BG).inner_margin(egui::Margin::same(14)))
+            .frame(egui::Frame::new().fill(look::pal().bg).inner_margin(egui::Margin::same(14)))
             .show(ui, |ui| {
                 self.header(ui);
                 ui.add_space(4.0);
@@ -922,7 +975,7 @@ impl Remote {
                 scroll.show(ui, |ui| {
                     ui.add_enabled_ui(self.device.is_some(), |ui| {
                         egui::Frame::new()
-                            .fill(look::BODY)
+                            .fill(look::pal().body)
                             .corner_radius(28)
                             .inner_margin(egui::Margin::symmetric(14, 20))
                             .show(ui, |ui| {
@@ -973,7 +1026,9 @@ fn main() -> eframe::Result {
             "Roku Remote",
             options,
             Box::new(move |cc| {
-                look::install(&cc.egui_ctx);
+                let (theme, animate) = core::saved_appearance();
+                look::set_animated(animate);
+                look::set_theme(&cc.egui_ctx, look::THEMES.iter().position(|(n, _)| Some(*n) == theme.as_deref()).unwrap_or(0));
                 egui_extras::install_image_loaders(&cc.egui_ctx);
                 state.lock().unwrap().ctx = Some(cc.egui_ctx.clone());
                 window.borrow_mut().reopened();
