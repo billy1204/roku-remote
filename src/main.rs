@@ -773,6 +773,26 @@ impl Remote {
         });
     }
 
+    fn remote_card(&mut self, ui: &mut egui::Ui) {
+        egui::Frame::new()
+            .fill(look::pal().body)
+            .corner_radius(28)
+            .inner_margin(egui::Margin::symmetric(14, 20))
+            .show(ui, |ui| {
+                ui.set_width(ui.available_width());
+                self.remote(ui);
+            });
+    }
+
+    /// Search, YouTube and sharing, which sit together in every layout.
+    fn tools(&mut self, ui: &mut egui::Ui) {
+        self.search(ui);
+        ui.add_space(4.0);
+        self.youtube(ui);
+        ui.add_space(4.0);
+        self.share(ui);
+    }
+
     fn channels(&mut self, ui: &mut egui::Ui) {
         ui.label(egui::RichText::new("CHANNELS").small().strong().color(look::pal().weak));
         if self.apps.is_empty() {
@@ -789,8 +809,9 @@ impl Remote {
             );
             return;
         }
-        let cols = 3;
         let gap = 8.0;
+        // Three across in a narrow window, more as it widens.
+        let cols = (((ui.available_width() + gap) / (88.0 + gap)) as usize).clamp(3, 6);
         let tw = ((ui.available_width() - gap * (cols - 1) as f32) / cols as f32).floor();
         // Roku channel art is 290×218.
         let th = (tw * 218.0 / 290.0).round();
@@ -868,6 +889,31 @@ impl Remote {
             ui.ctx().send_viewport_cmd(egui::ViewportCommand::Screenshot(Default::default()));
         }
     }
+}
+
+/// Window widths where the layout gains a second and a third column.
+const TWO_COLUMNS: f32 = 560.0;
+const THREE_COLUMNS: f32 = 900.0;
+const REMOTE_WIDTH: f32 = 340.0;
+const TOOLS_WIDTH: f32 = 300.0;
+
+/// A column `width` wide and `height` tall, laid out top to bottom.
+fn column(ui: &mut egui::Ui, width: f32, height: f32, add: impl FnOnce(&mut egui::Ui)) {
+    ui.allocate_ui_with_layout(vec2(width, height), egui::Layout::top_down(egui::Align::Min), |ui| {
+        ui.set_width(width);
+        add(ui);
+    });
+}
+
+/// A vertical scroll area filling what's left, named so each column scrolls on its own.
+fn scroll<R>(ui: &mut egui::Ui, id: &str, add: impl FnOnce(&mut egui::Ui) -> R) {
+    let mut area = egui::ScrollArea::vertical().id_salt(id).auto_shrink(false);
+    if id == "all"
+        && let Some(y) = std::env::var("ROKU_REMOTE_SCROLL").ok().and_then(|y| y.parse().ok())
+    {
+        area = area.vertical_scroll_offset(y);
+    }
+    area.show(ui, add);
 }
 
 /// Animated keys on or off, and the color theme.
@@ -967,38 +1013,63 @@ impl Remote {
             .show(ui, |ui| {
                 self.header(ui);
                 ui.add_space(4.0);
-                self.now_playing(ui);
-                let mut scroll = egui::ScrollArea::vertical().auto_shrink(false);
-                if let Some(y) = std::env::var("ROKU_REMOTE_SCROLL").ok().and_then(|y| y.parse().ok()) {
-                    scroll = scroll.vertical_scroll_offset(y);
-                }
-                scroll.show(ui, |ui| {
-                    ui.add_enabled_ui(self.device.is_some(), |ui| {
-                        egui::Frame::new()
-                            .fill(look::pal().body)
-                            .corner_radius(28)
-                            .inner_margin(egui::Margin::symmetric(14, 20))
-                            .show(ui, |ui| {
-                                ui.set_width(ui.available_width());
-                                self.remote(ui);
-                            });
-                        ui.add_space(4.0);
-                        self.search(ui);
-                        ui.add_space(4.0);
-                        self.youtube(ui);
-                        ui.add_space(4.0);
-                        self.share(ui);
-                        ui.add_space(4.0);
-                        self.channels(ui);
+                let w = ui.available_width();
+                if w < TWO_COLUMNS {
+                    self.now_playing(ui);
+                    scroll(ui, "all", |ui| {
+                        ui.add_enabled_ui(self.device.is_some(), |ui| {
+                            self.remote_card(ui);
+                            ui.add_space(4.0);
+                            self.tools(ui);
+                            ui.add_space(4.0);
+                            self.channels(ui);
+                        });
+                        ui.add_space(14.0);
+                        about(ui);
                     });
-                    ui.add_space(14.0);
-                    about(ui);
+                    return;
+                }
+                // Wider: the remote keeps its own column on the left, so it
+                // never scrolls away under the rest.
+                let gap = 14.0;
+                let side = if w < THREE_COLUMNS { 0.0 } else { TOOLS_WIDTH };
+                let middle = w - REMOTE_WIDTH - gap - if side > 0.0 { side + gap } else { 0.0 };
+                let h = ui.available_height();
+                ui.horizontal_top(|ui| {
+                    ui.spacing_mut().item_spacing.x = gap;
+                    column(ui, REMOTE_WIDTH, h, |ui| {
+                        scroll(ui, "remote", |ui| ui.add_enabled_ui(self.device.is_some(), |ui| self.remote_card(ui)));
+                    });
+                    column(ui, middle, h, |ui| {
+                        self.now_playing(ui);
+                        scroll(ui, "all", |ui| {
+                            ui.add_enabled_ui(self.device.is_some(), |ui| {
+                                if side == 0.0 {
+                                    self.tools(ui);
+                                    ui.add_space(4.0);
+                                }
+                                self.channels(ui);
+                            });
+                            ui.add_space(14.0);
+                            about(ui);
+                        });
+                    });
+                    if side > 0.0 {
+                        column(ui, side, h, |ui| {
+                            scroll(ui, "tools", |ui| ui.add_enabled_ui(self.device.is_some(), |ui| self.tools(ui)));
+                        });
+                    }
                 });
             });
     }
 }
 
 fn main() -> eframe::Result {
+    // Dev aid: open at another size, e.g. ROKU_REMOTE_SIZE=1000x700.
+    let size = std::env::var("ROKU_REMOTE_SIZE")
+        .ok()
+        .and_then(|s| s.split_once('x').and_then(|(w, h)| Some([w.parse().ok()?, h.parse().ok()?])))
+        .unwrap_or([380.0, 820.0]);
     let (core, events, wake) = Core::start();
     #[cfg(target_os = "linux")]
     let has_tray = {
@@ -1014,7 +1085,7 @@ fn main() -> eframe::Result {
     loop {
         let options = eframe::NativeOptions {
             viewport: egui::ViewportBuilder::default()
-                .with_inner_size([380.0, 820.0])
+                .with_inner_size(size)
                 .with_min_inner_size([340.0, 560.0])
                 .with_icon(eframe::icon_data::from_png_bytes(include_bytes!("../assets/icon.png")).unwrap_or_default())
                 .with_app_id("roku-remote"),
