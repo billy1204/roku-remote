@@ -943,7 +943,20 @@ fn appearance(ui: &mut egui::Ui) {
         });
         ui.horizontal_wrapped(|ui| {
             ui.spacing_mut().item_spacing.x = 6.0;
-            for (i, (name, palette)) in look::THEMES.iter().enumerate() {
+            for (i, (name, palette)) in look::THEMES.iter().enumerate().take(look::MOVING) {
+                if look::swatch(ui, palette, i == theme).on_hover_text(*name).clicked() {
+                    theme = i;
+                }
+            }
+        });
+        ui.add_space(4.0);
+        ui.horizontal(|ui| {
+            ui.label("Animated themes");
+            ui.label(weak("The background moves"));
+        });
+        ui.horizontal_wrapped(|ui| {
+            ui.spacing_mut().item_spacing.x = 6.0;
+            for (i, (name, palette)) in look::THEMES.iter().enumerate().skip(look::MOVING) {
                 if look::swatch(ui, palette, i == theme).on_hover_text(*name).clicked() {
                     theme = i;
                 }
@@ -1011,6 +1024,7 @@ impl Remote {
         egui::CentralPanel::default()
             .frame(egui::Frame::new().fill(look::pal().bg).inner_margin(egui::Margin::same(14)))
             .show(ui, |ui| {
+                look::backdrop(ui, ui.max_rect().expand(14.0));
                 self.header(ui);
                 ui.add_space(4.0);
                 let w = ui.available_width();

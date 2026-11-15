@@ -1,9 +1,10 @@
 //! Theme, vector icons and the remote's custom widgets.
 use eframe::egui::{self, Color32, CornerRadius, FontId, Pos2, Rect, Response, Sense, Shape, Stroke, Vec2, pos2, vec2};
 use std::f32::consts::{FRAC_PI_2, FRAC_PI_4, PI, TAU};
-use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, AtomicUsize, Ordering};
 
 /// The colors a theme changes.
+#[derive(Clone, Copy)]
 pub struct Palette {
     pub bg: Color32,
     pub body: Color32,
@@ -32,21 +33,130 @@ const fn palette(c: [u32; 8]) -> Palette {
     }
 }
 
-/// Themes by name, the first is the default.
-pub const THEMES: [(&str, Palette); 6] = [
+/// Themes by name, the first is the default. Those from [`MOVING`] on have
+/// a moving backdrop.
+pub const THEMES: [(&str, Palette); 10] = [
     ("Violet", palette([0x0f0d16, 0x1b1726, 0x2a243a, 0x372f4b, 0x7c4dff, 0x4a338f, 0xece8f5, 0x9a93ad])),
     ("Ocean", palette([0x0b1118, 0x14202c, 0x1f3142, 0x2a4157, 0x2f8fff, 0x1f538a, 0xe6f1fa, 0x8fa3b5])),
     ("Forest", palette([0x0c130f, 0x15211a, 0x213327, 0x2c4434, 0x22a95e, 0x1b6a40, 0xe6f4ea, 0x8ea89a])),
     ("Sunset", palette([0x15100c, 0x241a14, 0x36281e, 0x473428, 0xf2672a, 0x8f4223, 0xf7ece4, 0xb09d90])),
     ("Rose", palette([0x150c11, 0x24151d, 0x37212c, 0x482c3a, 0xf0407e, 0x8f2c4c, 0xf8e8ef, 0xb294a3])),
     ("Graphite", palette([0x101112, 0x1b1c1f, 0x2a2b2f, 0x37393e, 0x5f6b7a, 0x3f4651, 0xeceef1, 0x989ca4])),
+    ("Aurora", palette([0x0a1516, 0x10201f, 0x1a3432, 0x244541, 0x4fd9a6, 0x1f6f58, 0xe6f6f0, 0x8eaaa3])),
+    ("Starlight", palette([0x080a17, 0x10132a, 0x1c2040, 0x282d56, 0x8f9bff, 0x444c9c, 0xe9ebfa, 0x969bbd])),
+    ("Tide", palette([0x06141f, 0x0c2032, 0x123049, 0x1a405f, 0x3fb5e8, 0x1e6189, 0xe4f3fb, 0x8aa6b8])),
+    ("Ember", palette([0x160c08, 0x24130c, 0x381d12, 0x4a2819, 0xff8a3d, 0x94481c, 0xfaece3, 0xb59a8b])),
 ];
+
+/// Index of the first theme with a moving backdrop.
+pub const MOVING: usize = 6;
 
 static THEME: AtomicUsize = AtomicUsize::new(0);
 static ANIMATE: AtomicBool = AtomicBool::new(true);
+/// The time [`backdrop`] last painted at, as `f32` bits.
+static CLOCK: AtomicU32 = AtomicU32::new(0);
 
-pub fn pal() -> &'static Palette {
-    &THEMES[THEME.load(Ordering::Relaxed)].1
+pub fn pal() -> Palette {
+    let index = theme();
+    let mut p = THEMES[index].1;
+    if index >= MOVING {
+        // Cards let the backdrop show through.
+        p.body = p.body.gamma_multiply(0.72);
+        let t = f32::from_bits(CLOCK.load(Ordering::Relaxed));
+        match THEMES[index].0 {
+            "Aurora" => p.accent = p.accent.lerp_to_gamma(rgb(0x58b6f5), 0.5 + 0.5 * (t * 0.4).sin()),
+            "Ember" => p.accent = p.accent.lerp_to_gamma(rgb(0xffb26b), 0.5 + 0.5 * (t * 2.0).sin()),
+            _ => {}
+        }
+    }
+    p
+}
+
+/// A steady 0 to 1 number for particle `i`, different for each `salt`.
+fn noise(i: u32, salt: u32) -> f32 {
+    let mut h = i.wrapping_mul(0x9e37_79b1) ^ salt.wrapping_mul(0x85eb_ca6b);
+    h ^= h >> 15;
+    h = h.wrapping_mul(0x2c1b_3c6d);
+    h ^= h >> 12;
+    (h & 0xffff) as f32 / 65535.0
+}
+
+/// Fill between two wavy edges across `rect`, each giving its y at an x,
+/// shading from `top_color` to `bottom_color`.
+fn band(p: &egui::Painter, rect: Rect, top: impl Fn(f32) -> f32, bottom: impl Fn(f32) -> f32, top_color: Color32, bottom_color: Color32) {
+    const STEP: f32 = 8.0;
+    let mut mesh = egui::Mesh::default();
+    for i in 0..=(rect.width() / STEP).ceil() as u32 {
+        let x = rect.left() + i as f32 * STEP;
+        mesh.colored_vertex(pos2(x, top(x)), top_color);
+        mesh.colored_vertex(pos2(x, bottom(x)), bottom_color);
+        if i > 0 {
+            let n = i * 2;
+            mesh.add_triangle(n - 2, n - 1, n);
+            mesh.add_triangle(n - 1, n, n + 1);
+        }
+    }
+    p.add(Shape::mesh(mesh));
+}
+
+/// Paint the current theme's moving backdrop over `rect`, if it has one.
+/// Call before adding what goes in front of it.
+pub fn backdrop(ui: &egui::Ui, rect: Rect) {
+    if theme() < MOVING {
+        return;
+    }
+    let ctx = ui.ctx();
+    let t = ctx.input(|i| i.time) as f32;
+    CLOCK.store(t.to_bits(), Ordering::Relaxed);
+    ctx.request_repaint_after(std::time::Duration::from_millis(33));
+    let p = ui.painter().with_clip_rect(rect);
+    let (w, h) = (rect.width(), rect.height());
+    match THEMES[theme()].0 {
+        "Aurora" => {
+            // Three curtains of light drifting past each other.
+            for (i, (color, at, speed, len)) in
+                [(0x3fd6a0, 0.08, 0.5, 150.0), (0x58b6f5, 0.36, -0.35, 210.0), (0x8a7cf0, 0.66, 0.6, 130.0)].into_iter().enumerate()
+            {
+                let y = rect.top() + h * at;
+                let sway = move |x: f32, shift: f32| ((x - rect.left()) / len + t * speed + shift + i as f32).sin() * h * 0.045;
+                band(&p, rect, |x| y + sway(x, 0.0), |x| y + h * 0.24 + sway(x, 0.8), rgb(color).gamma_multiply(0.3), Color32::TRANSPARENT);
+            }
+        }
+        "Starlight" => {
+            let stars = ((w * h / 4500.0) as u32).clamp(40, 240);
+            for i in 0..stars {
+                let at = rect.min + vec2(noise(i, 1) * w, noise(i, 2) * h);
+                let twinkle = (t * (0.5 + 1.5 * noise(i, 3)) + TAU * noise(i, 4)).sin().abs();
+                p.circle_filled(at, 0.6 + noise(i, 5), rgb(0xdce1ff).gamma_multiply(0.15 + 0.75 * twinkle));
+            }
+            // A shooting star crosses the top every few seconds.
+            let k = (t % 7.0) / 1.1;
+            if k < 1.0 {
+                let head = rect.min + vec2(w * (0.05 + 0.8 * k), h * (0.03 + 0.2 * k));
+                p.line_segment([head - vec2(26.0, 9.0), head], Stroke::new(1.5, Color32::WHITE.gamma_multiply(1.0 - k)));
+            }
+        }
+        "Tide" => {
+            for (color, at, speed, len, tall) in
+                [(0x3c96d2, 0.60, 0.9, 70.0, 9.0), (0x46afeb, 0.73, -0.7, 95.0, 11.0), (0x6ecdfa, 0.86, 1.2, 60.0, 8.0)]
+            {
+                let y = rect.top() + h * at;
+                let color = rgb(color).gamma_multiply(0.24);
+                band(&p, rect, |x| y + ((x - rect.left()) / len + t * speed).sin() * tall, |_| rect.bottom(), color, color);
+            }
+        }
+        _ => {
+            let sparks = ((w / 9.0) as u32).clamp(24, 140);
+            for i in 0..sparks {
+                let speed = 0.5 + 1.5 * noise(i, 3);
+                // 1 at the bottom, 0 at the top, where the spark has burned out.
+                let low = 1.0 - (noise(i, 2) + t * speed * 18.0 / h).fract();
+                let x = noise(i, 1) * w + (t * speed + TAU * noise(i, 4)).sin() * 6.0;
+                let color = Color32::from_rgb(255, 130 + (noise(i, 5) * 60.0) as u8, 60);
+                p.circle_filled(rect.min + vec2(x, low * h), 1.2 + 1.3 * noise(i, 5), color.gamma_multiply(0.9 * low));
+            }
+        }
+    }
 }
 
 pub fn theme() -> usize {
@@ -123,9 +233,10 @@ pub fn install(ctx: &egui::Context) {
         style.spacing.button_padding = vec2(12.0, 7.0);
         style.spacing.interact_size.y = 34.0;
 
+        let body = THEMES[theme()].1.body;
         let v = &mut style.visuals;
         v.panel_fill = pal().bg;
-        v.window_fill = pal().body;
+        v.window_fill = body;
         v.extreme_bg_color = pal().key;
         v.override_text_color = Some(pal().text);
         v.selection.bg_fill = pal().accent_soft;
@@ -134,7 +245,7 @@ pub fn install(ctx: &egui::Context) {
         v.menu_corner_radius = CornerRadius::same(12);
         v.window_stroke = Stroke::new(1.0, pal().key_hover);
         for (w, fill) in [
-            (&mut v.widgets.noninteractive, pal().body),
+            (&mut v.widgets.noninteractive, body),
             (&mut v.widgets.inactive, pal().key),
             (&mut v.widgets.hovered, pal().key_hover),
             (&mut v.widgets.active, pal().accent),
