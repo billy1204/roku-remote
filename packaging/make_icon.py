@@ -2,7 +2,7 @@
 import struct, sys, zlib
 
 S = 256
-PURPLE, WHITE = (0x6C, 0x3F, 0xB5), (255, 255, 255)
+TEAL, WHITE = (0x17, 0x8F, 0x8A), (255, 255, 255)
 
 def in_rrect(x, y, x0, y0, w, h, r):
     cx = min(max(x, x0 + r), x0 + w - r)
@@ -11,8 +11,8 @@ def in_rrect(x, y, x0, y0, w, h, r):
 
 def color(x, y):
     c = None
-    if in_rrect(x, y, 64, 8, 128, 240, 48): c = PURPLE
-    for cx, cy, r, col in [(128, 96, 46, WHITE), (128, 96, 18, PURPLE),
+    if in_rrect(x, y, 64, 8, 128, 240, 48): c = TEAL
+    for cx, cy, r, col in [(128, 96, 46, WHITE), (128, 96, 18, TEAL),
                            (100, 176, 12, WHITE), (156, 176, 12, WHITE), (128, 212, 12, WHITE)]:
         if (x - cx) ** 2 + (y - cy) ** 2 <= r * r: c = col
     return c

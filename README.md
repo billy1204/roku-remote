@@ -1,10 +1,12 @@
-# Roku Remote
+# Sofa Remote
 
 A small desktop remote for Roku TVs and streaming players on your home network, for Linux (AppImage) and Windows (.exe). Written in Rust with [egui](https://github.com/emilk/egui).
 
+Formerly called Roku Remote.
+
 > **Unofficial.** This is an independent project, not affiliated with, endorsed by or sponsored by Roku, Inc. Roku is a trademark of Roku, Inc.; YouTube is a trademark of Google LLC.
 
-<img src="assets/icon.svg" width="64" alt="Roku Remote icon">
+<img src="assets/icon.svg" width="64" alt="Sofa Remote icon">
 
 ![The remote in its four animated themes: Aurora, Starlight, Tide and Ember](docs/animated-themes.png)
 
@@ -50,22 +52,22 @@ If a TV is still on Limited, the app tells you when you connect. The **?** butto
 
 ## Run it
 
-Download from the [latest release](https://github.com/billy1204/roku-remote/releases/latest), or build it yourself (below).
+Download from the [latest release](https://github.com/billy1204/sofa-remote/releases/latest), or build it yourself (below).
 
-**Linux:** download `Roku-Remote-x86_64.AppImage`, then:
+**Linux:** download `Sofa-Remote-x86_64.AppImage`, then:
 
 ```bash
-chmod +x Roku-Remote-x86_64.AppImage
-./Roku-Remote-x86_64.AppImage
+chmod +x Sofa-Remote-x86_64.AppImage
+./Sofa-Remote-x86_64.AppImage
 ```
 
-**Windows:** download `Roku-Remote-windows-x86_64.exe` and double-click it. It's not code-signed, so Windows SmartScreen may warn you the first time; choose **More info > Run anyway**. If Windows Firewall asks, allow it on private networks so it can find your Rokus.
+**Windows:** download `Sofa-Remote-windows-x86_64.exe` and double-click it. It's not code-signed, so Windows SmartScreen may warn you the first time; choose **More info > Run anyway**. If Windows Firewall asks, allow it on private networks so it can find your Rokus.
 
 Your computer and the Roku must be on the same network.
 
 ### Sharing media
 
-Install **Roku Media Player** on the TV (Home > Streaming Store > Roku Media Player > Add channel). Then click **Share a folder…** in the app. Media Player opens on the TV; choose **Roku Remote (*your computer's name*)** and browse with the Roku remote.
+Install **Roku Media Player** on the TV (Home > Streaming Store > Roku Media Player > Add channel). Then click **Share a folder…** in the app. Media Player opens on the TV; choose **Sofa Remote (*your computer's name*)** and browse with the Roku remote.
 
 The share is read-only, and only the folder you pick is visible. It answers only devices on your local network, never the internet, but anyone on the *same* network can browse it while it's shared (DLNA has no passwords). Share at home, not on public Wi-Fi, and press **Stop** when you're done.
 
@@ -83,7 +85,7 @@ APPIMAGETOOL=/path/to/appimagetool packaging/build_appimage.sh   # build the App
 
 After changing dependencies, run `packaging/licenses.sh` (needs `cargo install cargo-about --locked --features cli`) to regenerate [THIRD-PARTY-LICENSES.md](THIRD-PARTY-LICENSES.md).
 
-On Windows, `cargo build --release` produces `target\release\roku-remote.exe`. Publishing a GitHub release also builds the `.exe` and attaches it automatically ([workflow](.github/workflows/windows.yml)).
+On Windows, `cargo build --release` produces `target\release\sofa-remote.exe`. Publishing a GitHub release also builds the `.exe` and attaches it automatically ([workflow](.github/workflows/windows.yml)).
 
 ## How it works
 

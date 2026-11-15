@@ -11,8 +11,8 @@ use zbus::zvariant::{ObjectPath, OwnedValue, Value};
 const PATH: &str = "/org/mpris/MediaPlayer2";
 
 /// Our own name on the bus: holding it makes this the running instance.
-const APP_NAME: &str = "io.github.billy1204.RokuRemote";
-const APP_PATH: &str = "/io/github/billy1204/RokuRemote";
+const APP_NAME: &str = "io.github.billy1204.SofaRemote";
+const APP_PATH: &str = "/io/github/billy1204/SofaRemote";
 
 static MPRIS: OnceLock<Mpris> = OnceLock::new();
 
@@ -21,7 +21,7 @@ struct App {
     core: Core,
 }
 
-#[interface(name = "io.github.billy1204.RokuRemote")]
+#[interface(name = "io.github.billy1204.SofaRemote")]
 impl App {
     fn show(&self) {
         self.core.show_window();
@@ -54,11 +54,11 @@ impl Root {
     }
     #[zbus(property)]
     fn identity(&self) -> &str {
-        "Roku Remote"
+        "Sofa Remote"
     }
     #[zbus(property)]
     fn desktop_entry(&self) -> &str {
-        "roku-remote"
+        "sofa-remote"
     }
     #[zbus(property)]
     fn supported_uri_schemes(&self) -> Vec<String> {
@@ -124,8 +124,8 @@ impl Player {
             }
         };
         let id: String = self.now.app_id.chars().filter(|c| c.is_ascii_alphanumeric()).collect();
-        let track = format!("/org/rokuremote/track/app{id}");
-        put("mpris:trackid", Value::from(ObjectPath::try_from(track.as_str()).unwrap_or_else(|_| ObjectPath::from_static_str_unchecked("/org/rokuremote/track/none"))));
+        let track = format!("/org/sofaremote/track/app{id}");
+        put("mpris:trackid", Value::from(ObjectPath::try_from(track.as_str()).unwrap_or_else(|_| ObjectPath::from_static_str_unchecked("/org/sofaremote/track/none"))));
         if !self.now.app.is_empty() {
             put("xesam:title", Value::from(self.now.app.clone()));
         }
@@ -211,7 +211,7 @@ pub fn start(core: Core) -> Start {
     match built {
         Ok(conn) => {
             // MPRIS clients find players by this name prefix.
-            let _ = conn.request_name_with_flags("org.mpris.MediaPlayer2.roku_remote", zbus::fdo::RequestNameFlags::DoNotQueue.into());
+            let _ = conn.request_name_with_flags("org.mpris.MediaPlayer2.sofa_remote", zbus::fdo::RequestNameFlags::DoNotQueue.into());
             let _ = MPRIS.set(Mpris { conn });
             Start::Started
         }
@@ -272,7 +272,7 @@ pub fn art_url(host: &str, app_id: &str) -> Option<String> {
         .map(std::path::PathBuf::from)
         .or_else(|| std::env::var_os("HOME").map(|h| std::path::PathBuf::from(h).join(".cache")))?;
     let safe = |s: &str| s.chars().map(|c| if c.is_ascii_alphanumeric() { c } else { '_' }).collect::<String>();
-    let path = base.join("roku-remote").join("art").join(format!("{}-{}.png", safe(host), safe(app_id)));
+    let path = base.join("sofa-remote").join("art").join(format!("{}-{}.png", safe(host), safe(app_id)));
     if !path.exists() {
         let bytes = crate::ecp::icon(host, app_id).ok()?;
         let img = image::load_from_memory(&bytes).ok()?;

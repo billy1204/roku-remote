@@ -138,7 +138,7 @@ fn is_local(ip: IpAddr) -> bool {
 
 /// What the TV lists the share as.
 pub fn server_name() -> String {
-    format!("Roku Remote ({})", hostname())
+    format!("Sofa Remote ({})", hostname())
 }
 
 fn hostname() -> String {
@@ -163,7 +163,7 @@ fn local_ip() -> Option<Ipv4Addr> {
 fn uuid_for(host: &str) -> String {
     // FNV-1a: stable across Rust versions, unlike DefaultHasher.
     let mut h: u128 = 0x6c62272e07bb014262b821756295c58d;
-    for b in format!("roku-remote-media-share:{host}").bytes() {
+    for b in format!("sofa-remote-media-share:{host}").bytes() {
         h ^= b as u128;
         h = h.wrapping_mul(0x0000000001000000000000000000013B);
     }
@@ -225,7 +225,7 @@ pub fn firewall() -> Option<Firewall> {
         on.then(|| Firewall {
             name: "Windows Firewall",
             fix: "Open Windows Security > Firewall & network protection > Allow an app through firewall, \
-                  and tick Private for Roku Remote."
+                  and tick Private for Sofa Remote."
                 .into(),
         })
     }
@@ -310,7 +310,7 @@ impl Server {
 
 // ---- HTTP ----
 
-const SERVER: &str = "UPnP/1.0 roku-remote";
+const SERVER: &str = "UPnP/1.0 sofa-remote";
 const XML: &str = "text/xml; charset=\"utf-8\"";
 const DLNA_FLAGS: &str = "DLNA.ORG_OP=01;DLNA.ORG_CI=0;DLNA.ORG_FLAGS=01700000000000000000000000000000";
 
@@ -402,8 +402,8 @@ impl Server {
 <device>
 <deviceType>{DEVICE}</deviceType>
 <friendlyName>{}</friendlyName>
-<manufacturer>Roku Remote</manufacturer>
-<modelName>Roku Remote</modelName>
+<manufacturer>Sofa Remote</manufacturer>
+<modelName>Sofa Remote</modelName>
 <modelNumber>{}</modelNumber>
 <UDN>uuid:{}</UDN>
 <dlna:X_DLNADOC>DMS-1.50</dlna:X_DLNADOC>

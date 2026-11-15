@@ -99,8 +99,8 @@ impl Remote {
             share_help: false,
             youtube_help: false,
             connect_help: false,
-            appearance: std::env::var_os("ROKU_REMOTE_APPEARANCE").is_some(),
-            screenshot: std::env::var_os("ROKU_REMOTE_SCREENSHOT").map(|p| (PathBuf::from(p), 0)),
+            appearance: std::env::var_os("SOFA_REMOTE_APPEARANCE").is_some(),
+            screenshot: std::env::var_os("SOFA_REMOTE_SCREENSHOT").map(|p| (PathBuf::from(p), 0)),
         };
         // Reconnect before searching: the worker runs commands in order, so
         // when the search finishes the saved TV is already connected and a
@@ -178,8 +178,8 @@ impl Remote {
             }
         }
         let title = match (&self.device, &self.now) {
-            (Some(dev), Some(now)) => format!("{} · {} — Roku Remote", now.app, dev.name),
-            _ => "Roku Remote".into(),
+            (Some(dev), Some(now)) => format!("{} · {} — Sofa Remote", now.app, dev.name),
+            _ => "Sofa Remote".into(),
         };
         if title != self.title {
             ctx.send_viewport_cmd(egui::ViewportCommand::Title(title.clone()));
@@ -281,7 +281,7 @@ impl Remote {
 
     fn header(&mut self, ui: &mut egui::Ui) {
         ui.horizontal(|ui| {
-            let name = self.device.as_ref().map_or("Roku Remote".to_string(), |d| d.name.clone());
+            let name = self.device.as_ref().map_or("Sofa Remote".to_string(), |d| d.name.clone());
             let menu_w = ui.available_width() - 3.0 * (38.0 + ui.spacing().item_spacing.x);
             let mut pick = None;
             let combo = egui::ComboBox::from_id_salt("device")
@@ -909,7 +909,7 @@ fn column(ui: &mut egui::Ui, width: f32, height: f32, add: impl FnOnce(&mut egui
 fn scroll<R>(ui: &mut egui::Ui, id: &str, add: impl FnOnce(&mut egui::Ui) -> R) {
     let mut area = egui::ScrollArea::vertical().id_salt(id).auto_shrink(false);
     if id == "all"
-        && let Some(y) = std::env::var("ROKU_REMOTE_SCROLL").ok().and_then(|y| y.parse().ok())
+        && let Some(y) = std::env::var("SOFA_REMOTE_SCROLL").ok().and_then(|y| y.parse().ok())
     {
         area = area.vertical_scroll_offset(y);
     }
@@ -972,12 +972,12 @@ fn appearance(ui: &mut egui::Ui) {
 
 /// Who made this and whose it isn't, with the open-source notices.
 fn about(ui: &mut egui::Ui) {
-    const REPO: &str = "https://github.com/billy1204/roku-remote";
+    const REPO: &str = "https://github.com/billy1204/sofa-remote";
     let version = env!("CARGO_PKG_VERSION");
     let weak = |t: &str| egui::RichText::new(t).small().color(look::pal().weak);
     ui.vertical_centered(|ui| {
         ui.spacing_mut().item_spacing.y = 2.0;
-        ui.label(weak(&format!("Roku Remote {version} · unofficial")));
+        ui.label(weak(&format!("Sofa Remote {version} · unofficial")));
         ui.label(weak("Not affiliated with or endorsed by Roku, Inc."));
         ui.horizontal(|ui| {
             let links = [("Website", REPO.to_string()), ("Open-source licenses", format!("{REPO}/blob/v{version}/THIRD-PARTY-LICENSES.md"))];
@@ -1079,8 +1079,8 @@ impl Remote {
 }
 
 fn main() -> eframe::Result {
-    // Dev aid: open at another size, e.g. ROKU_REMOTE_SIZE=1000x700.
-    let size = std::env::var("ROKU_REMOTE_SIZE")
+    // Dev aid: open at another size, e.g. SOFA_REMOTE_SIZE=1000x700.
+    let size = std::env::var("SOFA_REMOTE_SIZE")
         .ok()
         .and_then(|s| s.split_once('x').and_then(|(w, h)| Some([w.parse().ok()?, h.parse().ok()?])))
         .unwrap_or([380.0, 820.0]);
@@ -1102,13 +1102,13 @@ fn main() -> eframe::Result {
                 .with_inner_size(size)
                 .with_min_inner_size([340.0, 560.0])
                 .with_icon(eframe::icon_data::from_png_bytes(include_bytes!("../assets/icon.png")).unwrap_or_default())
-                .with_app_id("roku-remote"),
+                .with_app_id("sofa-remote"),
             renderer: eframe::Renderer::Glow,
             ..Default::default()
         };
         let (window, state) = (remote.clone(), core.state.clone());
         eframe::run_native(
-            "Roku Remote",
+            "Sofa Remote",
             options,
             Box::new(move |cc| {
                 let (theme, animate) = core::saved_appearance();

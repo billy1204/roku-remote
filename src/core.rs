@@ -260,7 +260,13 @@ fn config_path(name: &str) -> Option<PathBuf> {
     let base = std::env::var_os("XDG_CONFIG_HOME")
         .map(PathBuf::from)
         .or_else(|| std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".config")))?;
-    Some(base.join("roku-remote").join(name))
+    let dir = base.join("sofa-remote");
+    // Settings saved under the app's old name move over once.
+    let old = base.join("roku-remote");
+    if !dir.exists() && old.is_dir() {
+        let _ = std::fs::rename(old, &dir);
+    }
+    Some(dir.join(name))
 }
 
 fn saved(name: &str) -> Option<String> {

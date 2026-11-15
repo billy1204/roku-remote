@@ -12,7 +12,7 @@ pub fn folder(title: &str) -> Result<Option<PathBuf>, String> {
     // The portal answers with a Response signal on a request object whose
     // path we can predict from our token; listen before asking so we can't
     // miss it.
-    let token = format!("roku_remote_{}", std::process::id());
+    let token = format!("sofa_remote_{}", std::process::id());
     let sender = conn.unique_name().map(|n| n.trim_start_matches(':').replace('.', "_")).unwrap_or_default();
     let path = format!("/org/freedesktop/portal/desktop/request/{sender}/{token}");
     let request = zbus::blocking::Proxy::new(&conn, "org.freedesktop.portal.Desktop", path.as_str(), "org.freedesktop.portal.Request")

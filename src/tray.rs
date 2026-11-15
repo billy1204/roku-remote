@@ -18,7 +18,7 @@ pub fn start(core: Core) -> bool {
     match (Tray { core }).spawn() {
         Ok(handle) => HANDLE.set(handle).is_ok(),
         Err(e) => {
-            eprintln!("roku-remote: no system tray available ({e}); closing the window quits");
+            eprintln!("sofa-remote: no system tray available ({e}); closing the window quits");
             false
         }
     }
@@ -70,10 +70,10 @@ impl Tray {
 
 impl ksni::Tray for Tray {
     fn id(&self) -> String {
-        "roku-remote".into()
+        "sofa-remote".into()
     }
     fn title(&self) -> String {
-        "Roku Remote".into()
+        "Sofa Remote".into()
     }
     fn icon_pixmap(&self) -> Vec<Icon> {
         static ICON: OnceLock<Vec<Icon>> = OnceLock::new();
@@ -81,7 +81,7 @@ impl ksni::Tray for Tray {
     }
     fn tool_tip(&self) -> ToolTip {
         let name = self.core.state.lock().unwrap().device.as_ref().map(|d| d.name.clone());
-        ToolTip { title: name.unwrap_or_else(|| "Roku Remote".into()), description: self.status(), ..Default::default() }
+        ToolTip { title: name.unwrap_or_else(|| "Sofa Remote".into()), description: self.status(), ..Default::default() }
     }
     fn activate(&mut self, _x: i32, _y: i32) {
         self.core.toggle_window();
@@ -150,7 +150,7 @@ impl ksni::Tray for Tray {
                     let label = format!("Share “{}”", folder_name(&last));
                     items.push(item(&label, "folder-remote", true, move |t| {
                         if let Err(e) = t.core.start_share(&last) {
-                            eprintln!("roku-remote: couldn't share {}: {e}", last.display());
+                            eprintln!("sofa-remote: couldn't share {}: {e}", last.display());
                         }
                     }));
                 }
