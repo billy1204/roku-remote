@@ -56,6 +56,12 @@
   </screenshots>
   <content_rating type="oars-1.1" />
   <releases>
+    <release version="0.10.1" date="2026-11-15">
+      <url type="details">https://github.com/billy1204/sofa-remote/releases/tag/v0.10.1</url>
+      <description>
+        <p>Groundwork for a Flatpak version: the launcher, icon and window now share one app ID, and the tray icon works inside a sandbox.</p>
+      </description>
+    </release>
     <release version="0.10.0" date="2026-11-15">
       <url type="details">https://github.com/billy1204/sofa-remote/releases/tag/v0.10.0</url>
       <description>
