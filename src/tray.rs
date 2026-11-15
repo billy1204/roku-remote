@@ -15,7 +15,9 @@ pub struct Tray {
 /// Show the tray icon. False when the desktop has no tray to show it in.
 pub fn start(core: Core) -> bool {
     use ksni::blocking::TrayMethods;
-    match (Tray { core }).spawn() {
+    // A Flatpak sandbox can't own the per-process name trays usually take.
+    let sandboxed = std::path::Path::new("/.flatpak-info").exists();
+    match (Tray { core }).disable_dbus_name(sandboxed).spawn() {
         Ok(handle) => HANDLE.set(handle).is_ok(),
         Err(e) => {
             eprintln!("sofa-remote: no system tray available ({e}); closing the window quits");

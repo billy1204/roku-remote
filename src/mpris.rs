@@ -11,6 +11,8 @@ use zbus::zvariant::{ObjectPath, OwnedValue, Value};
 const PATH: &str = "/org/mpris/MediaPlayer2";
 
 /// Our own name on the bus: holding it makes this the running instance.
+/// The app ID, so a Flatpak sandbox lets us own it without extra permissions.
+const BUS_NAME: &str = "io.github.billy1204.sofa-remote";
 const APP_NAME: &str = "io.github.billy1204.SofaRemote";
 const APP_PATH: &str = "/io/github/billy1204/SofaRemote";
 
@@ -202,7 +204,7 @@ pub fn start(core: Core) -> Start {
     let built = zbus::blocking::connection::Builder::session().and_then(|b| {
         b.allow_name_replacements(false)
             .replace_existing_names(false)
-            .name(APP_NAME)?
+            .name(BUS_NAME)?
             .serve_at(APP_PATH, App { core: core.clone() })?
             .serve_at(PATH, Root { core: core.clone() })?
             .serve_at(PATH, Player { core, now: Playing::default(), device: String::new(), art: None })?
@@ -217,7 +219,7 @@ pub fn start(core: Core) -> Start {
         }
         Err(zbus::Error::NameTaken) => {
             let shown = zbus::blocking::Connection::session()
-                .and_then(|c| c.call_method(Some(APP_NAME), APP_PATH, Some(APP_NAME), "Show", &()).map(drop));
+                .and_then(|c| c.call_method(Some(BUS_NAME), APP_PATH, Some(APP_NAME), "Show", &()).map(drop));
             if shown.is_ok() { Start::AlreadyRunning } else { Start::Unavailable }
         }
         Err(_) => Start::Unavailable,
