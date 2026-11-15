@@ -1,0 +1,66 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Copyright 2026 billy1204 -->
+<component type="desktop-application">
+  <id>io.github.billy1204.sofa-remote</id>
+  <metadata_license>CC0-1.0</metadata_license>
+  <project_license>MIT</project_license>
+  <name>Sofa Remote</name>
+  <summary>Control your Roku TV from the desktop</summary>
+  <developer id="io.github.billy1204">
+    <name>billy1204</name>
+  </developer>
+  <description>
+    <p>
+      Sofa Remote turns your computer into a remote for a Roku TV or player on the same network.
+      It finds the TV by itself, and nothing needs to be installed on the TV.
+    </p>
+    <ul>
+      <li>All the remote's keys, from the mouse or the keyboard</li>
+      <li>See what is playing, and pause it with your keyboard's media keys</li>
+      <li>Open any channel with one click</li>
+      <li>Type into search boxes on the TV from your keyboard</li>
+      <li>Send a YouTube link to the TV</li>
+      <li>Play videos, music and photos from a folder on your computer</li>
+      <li>Color themes, some with a moving background</li>
+    </ul>
+    <p>
+      Sofa Remote is an unofficial app. It is not affiliated with or endorsed by Roku, Inc.
+    </p>
+  </description>
+  <launchable type="desktop-id">io.github.billy1204.sofa-remote.desktop</launchable>
+  <url type="homepage">https://github.com/billy1204/sofa-remote</url>
+  <url type="bugtracker">https://github.com/billy1204/sofa-remote/issues</url>
+  <url type="vcs-browser">https://github.com/billy1204/sofa-remote</url>
+  <keywords>
+    <keyword>Roku</keyword>
+    <keyword>TV</keyword>
+    <keyword>remote</keyword>
+  </keywords>
+  <branding>
+    <color type="primary" scheme_preference="light">#8fd6d2</color>
+    <color type="primary" scheme_preference="dark">#0f5c59</color>
+  </branding>
+  <screenshots>
+    <screenshot type="default">
+      <image>https://raw.githubusercontent.com/billy1204/sofa-remote/c6591e0e788e0223c36a5675e2e3763035f754c2/docs/screenshots/wide.png</image>
+      <caption>The remote, channels and sharing in a wide window</caption>
+    </screenshot>
+    <screenshot>
+      <image>https://raw.githubusercontent.com/billy1204/sofa-remote/c6591e0e788e0223c36a5675e2e3763035f754c2/docs/screenshots/remote.png</image>
+      <caption>The remote as it opens</caption>
+    </screenshot>
+    <screenshot>
+      <image>https://raw.githubusercontent.com/billy1204/sofa-remote/c6591e0e788e0223c36a5675e2e3763035f754c2/docs/screenshots/aurora.png</image>
+      <caption>The Aurora theme</caption>
+    </screenshot>
+  </screenshots>
+  <content_rating type="oars-1.1" />
+  <releases>
+    <release version="0.10.0" date="2026-11-15">
+      <url type="details">https://github.com/billy1204/sofa-remote/releases/tag/v0.10.0</url>
+      <description>
+        <p>Roku Remote is now Sofa Remote. Saved settings carry over, and the icon is teal.</p>
+      </description>
+    </release>
+  </releases>
+</component>
