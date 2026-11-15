@@ -1,6 +1,6 @@
 # Sofa Remote
 
-A small desktop remote for Roku TVs and streaming players on your home network, for Linux (AppImage) and Windows (.exe). Written in Rust with [egui](https://github.com/emilk/egui).
+A small desktop remote for Roku TVs and streaming players on your home network, for Linux (AppImage or Flatpak) and Windows (.exe). Written in Rust with [egui](https://github.com/emilk/egui).
 
 Formerly called Roku Remote.
 
@@ -61,6 +61,15 @@ chmod +x Sofa-Remote-x86_64.AppImage
 ./Sofa-Remote-x86_64.AppImage
 ```
 
+**Linux (Flatpak):** to run it sandboxed instead, download `Sofa-Remote-x86_64.flatpak`, then:
+
+```bash
+flatpak install --user Sofa-Remote-x86_64.flatpak
+flatpak run io.github.billy1204.sofa-remote
+```
+
+This needs [Flatpak with Flathub set up](https://flathub.org/setup), which supplies the runtime. It doesn't update itself; install the newer file to update.
+
 **Windows:** download `Sofa-Remote-windows-x86_64.exe` and double-click it. It's not code-signed, so Windows SmartScreen may warn you the first time; choose **More info > Run anyway**. If Windows Firewall asks, allow it on private networks so it can find your Rokus.
 
 Your computer and the Roku must be on the same network.
@@ -81,7 +90,10 @@ Requires a Rust toolchain (edition 2024) and [appimagetool](https://github.com/A
 cargo run --release                       # run directly
 cargo test                                # run the tests
 APPIMAGETOOL=/path/to/appimagetool packaging/build_appimage.sh   # build the AppImage
+packaging/build_flatpak.sh                # build the .flatpak from the release the manifest names
 ```
+
+The Flatpak build needs `flatpak install --user flathub org.flatpak.Builder`.
 
 After changing dependencies, run `packaging/licenses.sh` (needs `cargo install cargo-about --locked --features cli`) to regenerate [THIRD-PARTY-LICENSES.md](THIRD-PARTY-LICENSES.md).
 

@@ -1,3 +1,5 @@
 /target
 *.AppImage
 *.AppImage.tmp
+*.flatpak
+*.flatpak.tmp
