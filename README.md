@@ -6,6 +6,10 @@ A small desktop remote for Roku TVs and streaming players on your home network, 
 
 <img src="assets/icon.svg" width="64" alt="Roku Remote icon">
 
+![The remote in its four animated themes: Aurora, Starlight, Tide and Ember](docs/animated-themes.png)
+
+The four animated themes: Aurora, Starlight, Tide and Ember. [Watch them move](docs/animated-themes.mp4) (8-second clip).
+
 ## Features
 
 - **Finds your Rokus automatically** (SSDP), or connect by IP address. Remembers the last device.
@@ -16,6 +20,8 @@ A small desktop remote for Roku TVs and streaming players on your home network, 
 - **Now playing:** the current channel, play state and progress, in the window and the title bar.
 - **Play YouTube links:** paste a YouTube link (watch, youtu.be, Shorts or live) with **Ctrl+V** and the TV's YouTube channel opens and plays it. (Right-click paste doesn't work in the app's text boxes.)
 - **Share media:** pick a folder and play its videos, music and photos on the TV with Roku's free **Roku Media Player** channel. The **?** button explains the setup, checks that Media Player is on the TV and warns if a firewall may keep the TV out. The tray can start and stop sharing too.
+- **Appearance:** six color themes (Violet, Ocean, Forest, Sunset, Rose, Graphite) and four animated ones with a moving background (Aurora, Starlight, Tide, Ember), plus a switch for animated buttons. Your choice is remembered.
+- **Fits the window:** drag the window wider and the remote rearranges into two or three columns.
 - **Linux desktop integration:**
   - **Tray icon:** play/pause, volume, mute, power and switching TVs without opening the window. Scroll on the icon to change the volume; click it to show or hide the remote. Closing the window keeps the remote in the tray.
   - **Media controls:** the TV appears in your desktop's media controls (COSMIC, GNOME, KDE) with the channel's logo, and your keyboard's media keys control it.
