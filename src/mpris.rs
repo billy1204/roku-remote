@@ -58,7 +58,7 @@ impl Root {
     }
     #[zbus(property)]
     fn desktop_entry(&self) -> &str {
-        "sofa-remote"
+        "io.github.billy1204.SofaRemote"
     }
     #[zbus(property)]
     fn supported_uri_schemes(&self) -> Vec<String> {

@@ -1102,7 +1102,7 @@ fn main() -> eframe::Result {
                 .with_inner_size(size)
                 .with_min_inner_size([340.0, 560.0])
                 .with_icon(eframe::icon_data::from_png_bytes(include_bytes!("../assets/icon.png")).unwrap_or_default())
-                .with_app_id("sofa-remote"),
+                .with_app_id("io.github.billy1204.SofaRemote"),
             renderer: eframe::Renderer::Glow,
             ..Default::default()
         };
