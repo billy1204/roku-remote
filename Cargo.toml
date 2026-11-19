@@ -27,6 +27,10 @@ ksni = { version = "0.3", default-features = false, features = ["blocking", "asy
 # Folder picker (Linux uses the desktop portal over zbus).
 [target.'cfg(windows)'.dependencies]
 rfd = { version = "0.15", default-features = false }
+# Tray icon, and the media keys and overlay (what the tray and MPRIS are on Linux).
+tray-icon = { version = "0.21", default-features = false }
+souvlaki = { version = "0.8", default-features = false }
+windows-sys = { version = "0.60", features = ["Win32_Foundation", "Win32_System_Threading", "Win32_UI_WindowsAndMessaging", "Win32_Security"] }
 
 # Embeds the icon in the Windows .exe.
 [target.'cfg(windows)'.build-dependencies]

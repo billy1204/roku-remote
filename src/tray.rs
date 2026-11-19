@@ -55,18 +55,8 @@ fn key_item(label: &str, icon: &str, enabled: bool, key: &'static str) -> MenuIt
 }
 
 impl Tray {
-    /// "HBO Max · Playing", or why there's nothing to show.
     fn status(&self) -> String {
-        let st = self.core.state.lock().unwrap();
-        match (&st.device, &st.now) {
-            (None, _) => "Not connected".into(),
-            (Some(_), None) => "Connected".into(),
-            (Some(_), Some(now)) => match now.state {
-                State::Playing => format!("{} · Playing", now.app),
-                State::Paused => format!("{} · Paused", now.app),
-                State::Stopped => now.app.clone(),
-            },
-        }
+        self.core.status()
     }
 
     /// The sleep timer's choices, and Cancel while it's running.

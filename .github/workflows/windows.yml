@@ -1,9 +1,13 @@
 name: Windows build
 
-# Builds sofa-remote.exe on Windows and attaches it to the release.
+# Builds sofa-remote.exe on Windows and attaches it to the release. A push
+# to the windows-test branch builds a test .exe (download it from the run's
+# artifacts) without touching any release.
 on:
   release:
     types: [published]
+  push:
+    branches: [windows-test]
   workflow_dispatch:
     inputs:
       tag:
@@ -21,14 +25,17 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: ${{ env.TAG }}
+          ref: ${{ env.TAG || github.sha }}
       - run: cargo build --release --locked
+      - run: cargo test --release --locked
+      - shell: bash
+        run: cp target/release/sofa-remote.exe Sofa-Remote-windows-x86_64.exe
       - name: Attach to release
+        if: env.TAG != ''
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          cp target/release/sofa-remote.exe Sofa-Remote-windows-x86_64.exe
           gh release upload "$TAG" Sofa-Remote-windows-x86_64.exe THIRD-PARTY-LICENSES.md --clobber
       - uses: actions/upload-artifact@v4
         with:

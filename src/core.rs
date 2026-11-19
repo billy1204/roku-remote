@@ -160,6 +160,20 @@ impl Core {
         self.repaint();
     }
 
+    /// "HBO Max · Playing", or why there's nothing to show; for the tray.
+    pub fn status(&self) -> String {
+        let st = self.state.lock().unwrap();
+        match (&st.device, &st.now) {
+            (None, _) => "Not connected".into(),
+            (Some(_), None) => "Connected".into(),
+            (Some(_), Some(now)) => match now.state {
+                ecp::State::Playing => format!("{} · Playing", now.app),
+                ecp::State::Paused => format!("{} · Paused", now.app),
+                ecp::State::Stopped => now.app.clone(),
+            },
+        }
+    }
+
     /// Run a routine on the current device, if any.
     pub fn routine(&self, steps: Vec<Step>) {
         if let Some(dev) = &self.state.lock().unwrap().device {

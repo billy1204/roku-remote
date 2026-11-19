@@ -12,6 +12,8 @@ mod routines;
 mod share;
 #[cfg(target_os = "linux")]
 mod tray;
+#[cfg(windows)]
+mod tray_win;
 
 use eframe::egui::{self, Vec2, vec2};
 use crate::core::{Cmd, Core, Event, Wake};
@@ -27,6 +29,8 @@ use std::sync::mpsc::Receiver;
 pub fn refresh_tray() {
     #[cfg(target_os = "linux")]
     tray::refresh();
+    #[cfg(windows)]
+    tray_win::refresh();
 }
 
 /// Lay out a row `total` wide, centered in the available width.
@@ -1615,7 +1619,12 @@ fn main() -> eframe::Result {
         }
         tray::start(core.clone())
     };
-    #[cfg(not(target_os = "linux"))]
+    #[cfg(windows)]
+    let has_tray = {
+        let Some(show) = tray_win::single_instance() else { return Ok(()) };
+        tray_win::start(core.clone(), show)
+    };
+    #[cfg(not(any(target_os = "linux", windows)))]
     let has_tray = false;
 
     let remote = Rc::new(RefCell::new(Remote::new(core.clone(), events)));
