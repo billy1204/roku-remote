@@ -56,6 +56,12 @@
   </screenshots>
   <content_rating type="oars-1.1" />
   <releases>
+    <release version="0.12.0" date="2026-11-19">
+      <url type="details">https://github.com/billy1204/sofa-remote/releases/tag/v0.12.0</url>
+      <description>
+        <p>New: the TV's volume level with a slider, one-click routines, a mini mode, live typing, a TV info panel, the sleep timer in the tray, starting at login, and commands you can bind to your own keyboard shortcuts. Shared videos offer their subtitles and pictures to the TV. On Windows the app now has a tray icon and answers the media keys.</p>
+      </description>
+    </release>
     <release version="0.11.0" date="2026-11-19">
       <url type="details">https://github.com/billy1204/sofa-remote/releases/tag/v0.11.0</url>
       <description>
