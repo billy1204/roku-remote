@@ -35,6 +35,6 @@ modules:
     sources:
       - type: git
         url: https://github.com/billy1204/sofa-remote.git
-        tag: v0.10.1
-        commit: 2147b59e600ff02a931c368d176f4ef567de0381
+        tag: v0.11.0
+        commit: 10f8e06af22bfed41669aa8b819cd6db12a726f8
       - cargo-sources.json
