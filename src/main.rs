@@ -34,6 +34,7 @@ fn centered_row(ui: &mut egui::Ui, total: f32, add: impl FnOnce(&mut egui::Ui)) 
     });
 }
 
+const REPO: &str = "https://github.com/billy1204/sofa-remote";
 const FLASH_SECS: f64 = 0.15;
 /// Keys that repeat while their button is held, after `HOLD_SECS`.
 const REPEATS: [&str; 8] = ["Up", "Down", "Left", "Right", "VolumeUp", "VolumeDown", "ChannelUp", "ChannelDown"];
@@ -73,6 +74,10 @@ struct Remote {
     filter: String,
     /// Channels pinned to the top of the list, by id.
     favorites: Vec<String>,
+    /// The TV connected last, for the Wake TV button while it's unreachable.
+    wake: Option<(String, [u8; 6])>,
+    /// Whether to check for a newer release at startup.
+    updates: bool,
     /// The folder picker, while it's open.
     picking: Option<Receiver<Result<Option<PathBuf>, String>>>,
     share_help: bool,
@@ -116,6 +121,8 @@ impl Remote {
             hold: None,
             filter: String::new(),
             favorites: core::saved_favorites(),
+            wake: core::saved_wake(),
+            updates: core::saved_updates(),
             picking: None,
             share_help: false,
             youtube_help: false,
@@ -263,6 +270,9 @@ impl Remote {
                         String::new()
                     };
                     self.host_input = dev.host.clone();
+                    if let Some(mac) = dev.mac {
+                        self.wake = Some((dev.host.clone(), mac));
+                    }
                     self.show_ip = false;
                     if !self.found.iter().any(|d| d.host == dev.host) {
                         self.found.push(dev.clone());
@@ -286,6 +296,11 @@ impl Remote {
                     self.busy = false;
                     self.error = true;
                     self.status = e;
+                }
+                Event::Waking => {
+                    self.busy = true;
+                    self.error = false;
+                    self.status = "Waking the TV…".into();
                 }
                 Event::Ok => {
                     if !self.busy && !self.error {
@@ -390,7 +405,24 @@ impl Remote {
             let (r, _) = ui.allocate_exact_size(vec2(8.0, 8.0), egui::Sense::hover());
             ui.painter().circle_filled(r.center(), 4.0, dot);
             ui.label(egui::RichText::new(sub).small().color(look::pal().weak));
+            if let Some(version) = self.core.state.lock().unwrap().update.clone() {
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    ui.add_space(4.0);
+                    ui.hyperlink_to(egui::RichText::new(format!("Version {version} is available")).small(), format!("{REPO}/releases/latest"))
+                        .on_hover_text("Open the download page");
+                });
+            }
         });
+        if self.device.is_none()
+            && !self.busy
+            && let Some((host, mac)) = self.wake.clone()
+        {
+            let wake = ui.add(egui::Button::new("Wake TV").min_size(vec2(86.0, 34.0)));
+            if wake.on_hover_text("Turn on the TV that was connected last, if it's asleep").clicked() {
+                self.send(Cmd::Wake(host, mac), "Waking the TV…");
+                self.busy = true;
+            }
+        }
         if self.show_ip || (self.device.is_none() && !self.busy && self.found.is_empty()) {
             ui.horizontal(|ui| {
                 let edit = ui.add(
@@ -411,7 +443,7 @@ impl Remote {
             self.connect_help(ui);
         }
         if self.appearance {
-            appearance(ui);
+            appearance(ui, &mut self.updates);
         }
     }
 
@@ -651,12 +683,24 @@ impl Remote {
         ui.horizontal(|ui| {
             let edit = ui.add(
                 egui::TextEdit::singleline(&mut self.text)
-                    .hint_text("Type into a search box on the TV…")
+                    .hint_text("Type or search the TV…")
                     .margin(egui::Margin::symmetric(12, 9))
-                    .desired_width(ui.available_width() - 44.0 - ui.spacing().item_spacing.x),
+                    .desired_width(ui.available_width() - 2.0 * (44.0 + ui.spacing().item_spacing.x)),
             );
             let enter = edit.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
-            let send = look::icon_key(ui, Vec2::splat(38.0), Icon::Send, false, Some(look::pal().accent)).on_hover_text("Send text");
+            let send = look::icon_key(ui, Vec2::splat(38.0), Icon::Send, false, Some(look::pal().accent))
+                .on_hover_text("Type this into a search box that's open on the TV  (Enter)");
+            let find = look::icon_key(ui, Vec2::splat(38.0), Icon::Search, false, Some(look::pal().accent))
+                .on_hover_text("Search every channel on the TV for this");
+            if find.clicked()
+                && !self.text.trim().is_empty()
+                && let Some(dev) = &self.device
+            {
+                let _ = self.core.cmd.send(Cmd::Search(dev.host.clone(), self.text.trim().to_string()));
+                self.text.clear();
+                self.error = false;
+                self.status = "Opening search on the TV…".into();
+            }
             if (send.clicked() || enter)
                 && !self.text.is_empty()
                 && let Some(dev) = &self.device
@@ -1060,8 +1104,8 @@ fn scroll<R>(ui: &mut egui::Ui, id: &str, add: impl FnOnce(&mut egui::Ui) -> R) 
     area.show(ui, add);
 }
 
-/// Animated keys on or off, and the color theme.
-fn appearance(ui: &mut egui::Ui) {
+/// Animated keys on or off, the color theme, and the update check.
+fn appearance(ui: &mut egui::Ui, updates: &mut bool) {
     let weak = |t: &str| egui::RichText::new(t).small().color(look::pal().weak);
     ui.add_space(6.0);
     egui::Frame::new().fill(look::pal().body).corner_radius(16).inner_margin(egui::Margin::same(12)).show(ui, |ui| {
@@ -1106,6 +1150,21 @@ fn appearance(ui: &mut egui::Ui) {
                 }
             }
         });
+        ui.add_space(4.0);
+        ui.horizontal(|ui| {
+            ui.vertical(|ui| {
+                ui.spacing_mut().item_spacing.y = 2.0;
+                ui.label("Check for updates");
+                ui.label(weak("Asks GitHub at startup if a newer version is out"));
+            });
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                let was = *updates;
+                look::toggle(ui, updates).on_hover_text(if was { "On" } else { "Off" });
+                if *updates != was {
+                    core::save_updates(*updates);
+                }
+            });
+        });
         if animate != look::animated() || theme != look::theme() {
             look::set_animated(animate);
             look::set_theme(ui.ctx(), theme);
@@ -1116,7 +1175,6 @@ fn appearance(ui: &mut egui::Ui) {
 
 /// Who made this and whose it isn't, with the open-source notices.
 fn about(ui: &mut egui::Ui) {
-    const REPO: &str = "https://github.com/billy1204/sofa-remote";
     let version = env!("CARGO_PKG_VERSION");
     let weak = |t: &str| egui::RichText::new(t).small().color(look::pal().weak);
     ui.vertical_centered(|ui| {

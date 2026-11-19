@@ -283,6 +283,7 @@ pub enum Icon {
     Refresh,
     Send,
     Appearance,
+    Search,
     Chevron(f32),
 }
 
@@ -323,6 +324,12 @@ pub fn paint_icon(p: &egui::Painter, rect: Rect, icon: Icon, color: Color32) {
             pts.push(c + vec2(-s * 0.3, s * 0.54));
             line(pts);
             line(vec![c + vec2(-s * 0.25, -s * 0.62), c + vec2(-s * 0.58, -s * 0.3), c + vec2(-s * 0.25, s * 0.02)]);
+        }
+        Icon::Search => {
+            // Magnifying glass.
+            let lens = c + vec2(-s * 0.14, -s * 0.14);
+            line(arc(lens, s * 0.44, 0.0, TAU));
+            line(vec![lens + s * 0.44 * vec2(FRAC_PI_4.cos(), FRAC_PI_4.sin()), c + vec2(s * 0.66, s * 0.66)]);
         }
         Icon::Options => {
             for k in 0..3 {

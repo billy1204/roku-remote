@@ -15,6 +15,8 @@ pub struct Device {
     pub limited: bool,
     /// The physical remote can be made to beep.
     pub find_remote: bool,
+    /// Its network card's address, for waking it from sleep.
+    pub mac: Option<[u8; 6]>,
 }
 
 #[derive(Clone, Debug)]
@@ -86,6 +88,37 @@ pub fn launch(host: &str, id: &str) -> Result<(), String> {
     request(host, "POST", &format!("/launch/{id}")).map(drop)
 }
 
+/// Open the TV's own search, which looks across every channel.
+pub fn search(host: &str, keyword: &str) -> Result<(), String> {
+    let encoded: String = keyword.bytes().map(|b| format!("%{b:02X}")).collect();
+    request(host, "POST", &format!("/search/browse?keyword={encoded}")).map(drop)
+}
+
+/// `aa:bb:cc:dd:ee:ff` as bytes.
+pub fn parse_mac(s: &str) -> Option<[u8; 6]> {
+    let mut mac = [0u8; 6];
+    let mut parts = s.trim().split(':');
+    for b in &mut mac {
+        *b = u8::from_str_radix(parts.next()?, 16).ok()?;
+    }
+    parts.next().is_none().then_some(mac)
+}
+
+/// Wake-on-LAN: a "magic packet" the sleeping TV's network card listens for.
+pub fn wake(mac: [u8; 6]) {
+    let mut packet = vec![0xff; 6];
+    for _ in 0..16 {
+        packet.extend_from_slice(&mac);
+    }
+    if let Ok(sock) = UdpSocket::bind("0.0.0.0:0")
+        && sock.set_broadcast(true).is_ok()
+    {
+        for port in [9, 7] {
+            let _ = sock.send_to(&packet, ("255.255.255.255", port));
+        }
+    }
+}
+
 /// YouTube's channel id.
 pub const YOUTUBE: &str = "837";
 
@@ -149,6 +182,7 @@ pub fn device_info(host: &str) -> Result<Device, String> {
         is_tv: tag(&xml, "is-tv") == Some("true"),
         limited: tag(&xml, "ecp-setting-mode") == Some("limited"),
         find_remote: tag(&xml, "supports-find-remote") == Some("true"),
+        mac: tag(&xml, if tag(&xml, "network-type") == Some("ethernet") { "ethernet-mac" } else { "wifi-mac" }).and_then(parse_mac),
     })
 }
 
@@ -189,7 +223,7 @@ pub fn discover() -> Vec<Device> {
             }
         }
     }
-    hosts.iter().map(|h| device_info(h).unwrap_or(Device { host: h.clone(), name: h.clone(), is_tv: false, limited: false, find_remote: false })).collect()
+    hosts.iter().map(|h| device_info(h).unwrap_or(Device { host: h.clone(), name: h.clone(), is_tv: false, limited: false, find_remote: false, mac: None })).collect()
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
@@ -246,7 +280,15 @@ pub fn now_playing(host: &str) -> Result<Playing, String> {
 
 #[cfg(test)]
 mod tests {
-    use super::youtube_id;
+    use super::{parse_mac, youtube_id};
+
+    #[test]
+    fn macs() {
+        assert_eq!(parse_mac("94:b3:f7:00:1A:ff"), Some([0x94, 0xb3, 0xf7, 0x00, 0x1a, 0xff]));
+        for bad in ["", "94:b3:f7:00:1a", "94:b3:f7:00:1a:ff:00", "94-b3-f7-00-1a-ff", "zz:b3:f7:00:1a:ff"] {
+            assert_eq!(parse_mac(bad), None, "{bad}");
+        }
+    }
 
     #[test]
     fn youtube_links() {

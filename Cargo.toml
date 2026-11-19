@@ -11,6 +11,8 @@ egui_extras = { version = "=0.36.2", default-features = false, features = ["imag
 image = { version = "0.25", default-features = false, features = ["png", "jpeg", "webp"] }
 # Sharing a folder: SSDP needs port 1900 shared with other programs.
 socket2 = { version = "0.6", features = ["all"] }
+# The update check: GitHub only speaks HTTPS.
+ureq = { version = "3", default-features = false, features = ["rustls"] }
 
 # Linux/BSD desktop backends: native Wayland + X11 windows.
 [target.'cfg(all(unix, not(target_os = "macos")))'.dependencies]

@@ -21,6 +21,9 @@ The four animated themes: Aurora, Starlight, Tide and Ember. [Watch them move](d
 - **Sleep timer** (Roku TVs only): turn the TV off in 30, 60 or 90 minutes. It keeps counting with the window closed to the tray.
 - **Find remote:** makes the Roku remote beep, on devices that support it.
 - **Type into search boxes** from your keyboard instead of the on-screen keyboard.
+- **Search the TV:** type a movie or show and press the magnifier to open the TV's own search, which looks across every channel.
+- **Wake TV:** if the TV has gone to sleep and off the network, the power button (or **Wake TV** at startup) wakes it over the network, on TVs that support it.
+- **Update notice:** tells you when a newer version is out. It asks GitHub once at startup and sends nothing about you or your TV; switch it off under Appearance.
 - **Channel launcher:** a button for every installed channel. Type in **Filter** to narrow the list, and right-click a channel to pin it to the top.
 - **Now playing:** the current channel, play state and progress, in the window and the title bar.
 - **Play YouTube links:** paste a YouTube link (watch, youtu.be, Shorts or live) with **Ctrl+V** and the TV's YouTube channel opens and plays it. (Right-click paste doesn't work in the app's text boxes.)
