@@ -17,6 +17,15 @@ pub struct Device {
     pub find_remote: bool,
     /// Its network card's address, for waking it from sleep.
     pub mac: Option<[u8; 6]>,
+    /// Model, software and network, for the info panel.
+    pub info: Vec<(&'static str, String)>,
+}
+
+/// A TV's speaker volume (0 to 100) and whether it's muted.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Audio {
+    pub volume: u32,
+    pub muted: bool,
 }
 
 #[derive(Clone, Debug)]
@@ -86,6 +95,33 @@ pub fn type_text(host: &str, text: &str) -> Result<(), String> {
 
 pub fn launch(host: &str, id: &str) -> Result<(), String> {
     request(host, "POST", &format!("/launch/{id}")).map(drop)
+}
+
+pub fn audio(host: &str) -> Result<Audio, String> {
+    let xml = request(host, "GET", "/query/audio-device")?;
+    let global = tag(&xml, "global").ok_or("no volume reported")?;
+    Ok(Audio {
+        volume: tag(global, "volume").and_then(|v| v.trim().parse().ok()).ok_or("no volume reported")?,
+        muted: tag(global, "muted") == Some("true"),
+    })
+}
+
+/// Step the volume to `target` with the volume keys; the TV has no command
+/// to set it outright.
+pub fn set_volume(host: &str, target: u32) -> Result<(), String> {
+    // A second pass corrects any presses the TV dropped.
+    for pass in 0..2 {
+        if pass > 0 {
+            // The TV reports the old level for a moment after the last press.
+            std::thread::sleep(Duration::from_millis(600));
+        }
+        let now = audio(host)?.volume;
+        let key = if target > now { "VolumeUp" } else { "VolumeDown" };
+        for _ in 0..target.abs_diff(now).min(100) {
+            keypress(host, key)?;
+        }
+    }
+    Ok(())
 }
 
 /// Open the TV's own search, which looks across every channel.
@@ -183,6 +219,17 @@ pub fn device_info(host: &str) -> Result<Device, String> {
         limited: tag(&xml, "ecp-setting-mode") == Some("limited"),
         find_remote: tag(&xml, "supports-find-remote") == Some("true"),
         mac: tag(&xml, if tag(&xml, "network-type") == Some("ethernet") { "ethernet-mac" } else { "wifi-mac" }).and_then(parse_mac),
+        info: [
+            ("Model", "friendly-model-name"),
+            ("Model number", "model-number"),
+            ("Software", "software-version"),
+            ("Picture", "ui-resolution"),
+            ("Network", "network-name"),
+            ("Connection", "network-type"),
+        ]
+        .iter()
+        .filter_map(|(label, name)| tag(&xml, name).filter(|v| !v.is_empty()).map(|v| (*label, unescape(v))))
+        .collect(),
     })
 }
 
@@ -223,7 +270,7 @@ pub fn discover() -> Vec<Device> {
             }
         }
     }
-    hosts.iter().map(|h| device_info(h).unwrap_or(Device { host: h.clone(), name: h.clone(), is_tv: false, limited: false, find_remote: false, mac: None })).collect()
+    hosts.iter().map(|h| device_info(h).unwrap_or(Device { host: h.clone(), name: h.clone(), is_tv: false, limited: false, find_remote: false, mac: None, info: Vec::new() })).collect()
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq)]

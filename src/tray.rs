@@ -68,6 +68,18 @@ impl Tray {
             },
         }
     }
+
+    /// The sleep timer's choices, and Cancel while it's running.
+    fn sleep_menu(&self) -> MenuItem<Tray> {
+        let left = self.core.sleep_left();
+        let mut submenu: Vec<MenuItem<Tray>> =
+            [30, 60, 90].into_iter().map(|m| item(&format!("{m} minutes"), "", true, move |t| t.core.set_sleep(Some(m)))).collect();
+        if let Some(left) = left {
+            submenu.extend([MenuItem::Separator, item(&format!("Cancel ({left} min left)"), "", true, |t| t.core.set_sleep(None))]);
+        }
+        let label = left.map_or("Sleep Timer".to_string(), |left| format!("Sleep Timer · {left} min left"));
+        SubMenu { label, icon_name: "appointment-soon".into(), submenu, ..Default::default() }.into()
+    }
 }
 
 impl ksni::Tray for Tray {
@@ -118,6 +130,9 @@ impl ksni::Tray for Tray {
                 MenuItem::Separator,
                 key_item("Power", "system-shutdown", connected, "PowerToggle"),
             ]);
+        }
+        if is_tv {
+            items.push(self.sleep_menu());
         }
         if !found.is_empty() {
             let selected = device.as_ref().and_then(|d| found.iter().position(|f| f.host == d.host)).unwrap_or(usize::MAX);

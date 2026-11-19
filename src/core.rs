@@ -20,6 +20,8 @@ pub enum Cmd {
     Search(String, String),
     /// Wake a sleeping TV (by its network card's address), then connect.
     Wake(String, [u8; 6]),
+    /// Step the TV's volume to a level.
+    Volume(String, u32),
 }
 
 pub enum Event {
@@ -60,6 +62,8 @@ pub struct Shared {
     pub sleep: Option<(Instant, u32)>,
     /// A newer release's version, once the update check has found one.
     pub update: Option<String>,
+    /// The TV's volume and mute state, when it reports them.
+    pub audio: Option<ecp::Audio>,
 }
 
 #[derive(Clone)]
@@ -149,6 +153,14 @@ impl Core {
     /// Turn the TV off in `minutes`; `None` cancels.
     pub fn set_sleep(&self, minutes: Option<u32>) {
         self.state.lock().unwrap().sleep = minutes.map(|m| (Instant::now() + Duration::from_secs(m as u64 * 60), m));
+        crate::refresh_tray();
+        self.repaint();
+    }
+
+    /// Minutes until the sleep timer turns the TV off.
+    pub fn sleep_left(&self) -> Option<u64> {
+        let (at, _) = self.state.lock().unwrap().sleep?;
+        Some(at.saturating_duration_since(Instant::now()).as_secs().div_ceil(60))
     }
 
     /// Share `folder` with Roku Media Player, replacing any earlier share,
@@ -218,6 +230,7 @@ impl Core {
                     }
                 },
                 Cmd::Wake(host, mac) => self.wake(&host, mac, &ev_tx),
+                Cmd::Volume(host, level) => ecp::set_volume(&host, level).map_or_else(Event::Error, |_| Event::Ok),
                 Cmd::Search(host, text) => ecp::search(&host, &text).map_or_else(Event::Error, |_| Event::Ok),
                 Cmd::Text(host, text) => ecp::type_text(&host, &text).map_or_else(Event::Error, |_| Event::Ok),
                 Cmd::Launch(host, id) => ecp::launch(&host, &id).map_or_else(Event::Error, |_| Event::Ok),
@@ -256,6 +269,7 @@ impl Core {
             let mut st = self.state.lock().unwrap();
             st.device = Some(dev.clone());
             st.now = None;
+            st.audio = None;
             st.media_player = (!apps.is_empty()).then(|| apps.iter().any(|a| a.id == share::MEDIA_PLAYER));
             if !st.found.iter().any(|d| d.host == dev.host) {
                 st.found.push(dev.clone());
@@ -285,6 +299,7 @@ impl Core {
     /// tray and the desktop's media controls.
     fn poll(self, ev_tx: Sender<Event>) {
         let mut last: Option<(String, ecp::Playing)> = None;
+        let mut sleep_left = None;
         loop {
             std::thread::sleep(Duration::from_secs(1));
             let asleep = {
@@ -299,7 +314,22 @@ impl Core {
                 self.key("PowerOff");
                 self.repaint();
             }
+            // The tray counts the sleep timer down by the minute.
+            let left = self.sleep_left();
+            if left != sleep_left {
+                sleep_left = left;
+                crate::refresh_tray();
+            }
             let Some(dev) = self.state.lock().unwrap().device.clone() else { continue };
+            if dev.is_tv {
+                let audio = ecp::audio(&dev.host).ok();
+                let mut st = self.state.lock().unwrap();
+                if st.audio != audio && st.device.as_ref().is_some_and(|d| d.host == dev.host) {
+                    st.audio = audio;
+                    drop(st);
+                    self.repaint();
+                }
+            }
             let Ok(now) = ecp::now_playing(&dev.host) else { continue };
             #[cfg(target_os = "linux")]
             crate::mpris::update(&dev.name, &now, crate::mpris::art_url(&dev.host, &now.app_id));
@@ -350,6 +380,15 @@ fn save(name: &str, value: &str) {
         let _ = std::fs::create_dir_all(path.parent().unwrap());
         let _ = std::fs::write(path, value);
     }
+}
+
+/// An on/off setting; `default` until it's first changed.
+pub fn flag(name: &str, default: bool) -> bool {
+    saved(name).map_or(default, |v| v == "on")
+}
+
+pub fn set_flag(name: &str, on: bool) {
+    save(name, if on { "on" } else { "off" });
 }
 
 pub fn saved_host() -> Option<String> {

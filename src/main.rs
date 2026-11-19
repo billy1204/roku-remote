@@ -1,5 +1,7 @@
 // No console window behind the remote on Windows.
 #![cfg_attr(windows, windows_subsystem = "windows")]
+mod autostart;
+mod cli;
 mod core;
 mod ecp;
 mod look;
@@ -78,6 +80,17 @@ struct Remote {
     wake: Option<(String, [u8; 6])>,
     /// Whether to check for a newer release at startup.
     updates: bool,
+    /// Whether the app starts with the computer.
+    autostart: bool,
+    /// The TV's volume and mute state, as last polled.
+    audio: Option<ecp::Audio>,
+    /// A volume picked on the slider and when to stop showing it in place
+    /// of the TV's own: the TV steps there one press at a time.
+    volume_set: Option<(u32, f64)>,
+    /// Live typing: each key goes to the TV as it's typed.
+    live: bool,
+    /// What live typing has sent to the TV so far.
+    live_sent: String,
     /// The folder picker, while it's open.
     picking: Option<Receiver<Result<Option<PathBuf>, String>>>,
     share_help: bool,
@@ -123,6 +136,11 @@ impl Remote {
             favorites: core::saved_favorites(),
             wake: core::saved_wake(),
             updates: core::saved_updates(),
+            autostart: autostart::enabled(),
+            audio: None,
+            volume_set: None,
+            live: core::flag("live", false),
+            live_sent: String::new(),
             picking: None,
             share_help: false,
             youtube_help: false,
@@ -216,6 +234,7 @@ impl Remote {
     }
 
     fn poll(&mut self, ctx: &egui::Context) {
+        self.audio = self.core.state.lock().unwrap().audio;
         if let Some(rx) = &self.picking
             && let Ok(picked) = rx.try_recv()
         {
@@ -444,7 +463,36 @@ impl Remote {
         }
         if self.appearance {
             appearance(ui, &mut self.updates);
+            self.startup(ui);
         }
+    }
+
+    /// The start-at-login switch, under Appearance.
+    fn startup(&mut self, ui: &mut egui::Ui) {
+        let weak = |t: &str| egui::RichText::new(t).small().color(look::pal().weak);
+        egui::Frame::new().fill(look::pal().body).corner_radius(16).inner_margin(egui::Margin::same(12)).show(ui, |ui| {
+            ui.set_width(ui.available_width());
+            ui.horizontal(|ui| {
+                ui.vertical(|ui| {
+                    ui.spacing_mut().item_spacing.y = 2.0;
+                    ui.label("Start at login");
+                    ui.label(weak("Opens with the computer, tucked in the tray"));
+                });
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    let mut on = self.autostart;
+                    look::toggle(ui, &mut on).on_hover_text(if on { "On" } else { "Off" });
+                    if on != self.autostart {
+                        match autostart::set(on) {
+                            Ok(()) => self.autostart = on,
+                            Err(e) => {
+                                self.error = true;
+                                self.status = e;
+                            }
+                        }
+                    }
+                });
+            });
+        });
     }
 
     fn connect_help(&self, ui: &mut egui::Ui) {
@@ -453,6 +501,17 @@ impl Remote {
         egui::Frame::new().fill(look::pal().body).corner_radius(16).inner_margin(egui::Margin::same(12)).show(ui, |ui| {
             ui.set_width(ui.available_width());
             ui.spacing_mut().item_spacing.y = 6.0;
+            if let Some(dev) = &self.device {
+                ui.label(egui::RichText::new(&dev.name).strong());
+                egui::Grid::new("tv-info").num_columns(2).spacing(vec2(12.0, 4.0)).show(ui, |ui| {
+                    for (label, value) in dev.info.iter().map(|(l, v)| (*l, v.as_str())).chain([("Address", dev.host.as_str())]) {
+                        ui.label(weak(label));
+                        ui.label(egui::RichText::new(value).small());
+                        ui.end_row();
+                    }
+                });
+                ui.separator();
+            }
             ui.label(egui::RichText::new("TV not responding?").strong());
             ui.add(
                 egui::Label::new(weak(
@@ -489,7 +548,7 @@ impl Remote {
     /// One key: sends `key` on click, lights up while pressed or flashed.
     fn icon_key(&mut self, ui: &mut egui::Ui, size: Vec2, icon: Icon, key: &'static str, tip: &str) {
         let tint = (key == "PowerToggle").then_some(look::POWER);
-        let lit = self.lit(ui, key);
+        let lit = self.lit(ui, key) || (key == "VolumeMute" && self.audio.is_some_and(|a| a.muted));
         let resp = look::icon_key(ui, size, icon, lit, tint).on_hover_text(tip);
         self.press(ui, key, resp.clicked(), resp.is_pointer_button_down_on());
     }
@@ -500,14 +559,36 @@ impl Remote {
         self.press(ui, key, resp.clicked(), resp.is_pointer_button_down_on());
     }
 
+    /// The TV's volume, and a slider that steps it to a chosen level.
+    fn volume(&mut self, ui: &mut egui::Ui, width: f32) {
+        let (Some(audio), Some(host)) = (self.audio, self.device.as_ref().map(|d| d.host.clone())) else { return };
+        let now = ui.input(|i| i.time);
+        if self.volume_set.is_some_and(|(v, until)| now > until || (until.is_finite() && v == audio.volume)) {
+            self.volume_set = None;
+        }
+        let mut level = self.volume_set.map_or(audio.volume, |(v, _)| v);
+        let line = if audio.muted { format!("Muted  ·  volume {level}") } else { format!("Volume {level}") };
+        ui.vertical_centered(|ui| ui.label(egui::RichText::new(line).small().color(look::pal().weak)));
+        centered_row(ui, width, |ui| {
+            ui.spacing_mut().slider_width = width;
+            let slider = ui.add(egui::Slider::new(&mut level, 0..=100).show_value(false)).on_hover_text("Drag to set the volume");
+            if slider.drag_stopped() || (slider.changed() && !slider.dragged()) {
+                let _ = self.core.cmd.send(Cmd::Volume(host, level));
+                // Long enough for the TV to step from one end to the other.
+                self.volume_set = Some((level, now + 20.0));
+            } else if slider.changed() {
+                self.volume_set = Some((level, f64::INFINITY));
+            }
+        });
+    }
+
     /// Turn the TV off after a while; pressing the lit choice cancels.
     fn sleep_timer(&mut self, ui: &mut egui::Ui) {
         let sleep = self.core.state.lock().unwrap().sleep;
-        let line = match sleep {
-            Some((at, _)) => {
+        let line = match self.core.sleep_left() {
+            Some(left) => {
                 // Count the minutes down without waiting for input.
                 ui.ctx().request_repaint_after(std::time::Duration::from_secs(5));
-                let left = at.saturating_duration_since(std::time::Instant::now()).as_secs().div_ceil(60);
                 format!("TV turns off in {left} min")
             }
             None => "Sleep timer".into(),
@@ -581,6 +662,7 @@ impl Remote {
                 self.icon_key(ui, vk, Icon::Mute, "VolumeMute", "Mute  (M)");
                 self.icon_key(ui, vk, Icon::VolUp, "VolumeUp", "Volume up  (+)");
             });
+            self.volume(ui, 3.0 * vk.x + 2.0 * gap);
             // Channel rocker, for the antenna.
             centered_row(ui, 2.0 * vk.x + gap, |ui| {
                 self.text_key(ui, vec2(vk.x, 30.0), "CH −", "ChannelDown", "Channel down  (Page Down)");
@@ -688,8 +770,21 @@ impl Remote {
                     .desired_width(ui.available_width() - 2.0 * (44.0 + ui.spacing().item_spacing.x)),
             );
             let enter = edit.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
-            let send = look::icon_key(ui, Vec2::splat(38.0), Icon::Send, false, Some(look::pal().accent))
-                .on_hover_text("Type this into a search box that's open on the TV  (Enter)");
+            let send = look::icon_key(ui, Vec2::splat(38.0), Icon::Send, false, Some(look::pal().accent)).on_hover_text(if self.live {
+                "Press Enter on the TV's keyboard  (Enter)"
+            } else {
+                "Type this into a search box that's open on the TV  (Enter)"
+            });
+            if self.live
+                && let Some(host) = self.device.as_ref().map(|d| d.host.clone())
+            {
+                self.live_type(&host);
+                if send.clicked() || enter {
+                    let _ = self.core.cmd.send(Cmd::Key(host, "Enter"));
+                    self.text.clear();
+                    self.live_sent.clear();
+                }
+            }
             let find = look::icon_key(ui, Vec2::splat(38.0), Icon::Search, false, Some(look::pal().accent))
                 .on_hover_text("Search every channel on the TV for this");
             if find.clicked()
@@ -698,16 +793,40 @@ impl Remote {
             {
                 let _ = self.core.cmd.send(Cmd::Search(dev.host.clone(), self.text.trim().to_string()));
                 self.text.clear();
+                self.live_sent.clear();
                 self.error = false;
                 self.status = "Opening search on the TV…".into();
             }
             if (send.clicked() || enter)
+                && !self.live
                 && !self.text.is_empty()
                 && let Some(dev) = &self.device
             {
                 let _ = self.core.cmd.send(Cmd::Text(dev.host.clone(), std::mem::take(&mut self.text)));
             }
         });
+        let live = ui.checkbox(&mut self.live, egui::RichText::new("Send each key as I type").small().color(look::pal().weak));
+        if live.on_hover_text("Letters and Backspace go to the TV's on-screen keyboard right away").changed() {
+            core::set_flag("live", self.live);
+            // Start from what's in the box; it isn't on the TV yet.
+            self.live_sent = self.text.clone();
+        }
+    }
+
+    /// Send the TV the difference between what's typed and what it has.
+    fn live_type(&mut self, host: &str) {
+        if self.text == self.live_sent {
+            return;
+        }
+        let same = self.live_sent.chars().zip(self.text.chars()).take_while(|(a, b)| a == b).count();
+        for _ in same..self.live_sent.chars().count() {
+            let _ = self.core.cmd.send(Cmd::Key(host.to_string(), "Backspace"));
+        }
+        let added: String = self.text.chars().skip(same).collect();
+        if !added.is_empty() {
+            let _ = self.core.cmd.send(Cmd::Text(host.to_string(), added));
+        }
+        self.live_sent = self.text.clone();
     }
 
     fn youtube(&mut self, ui: &mut egui::Ui) {
@@ -1290,6 +1409,10 @@ fn main() -> eframe::Result {
         .ok()
         .and_then(|s| s.split_once('x').and_then(|(w, h)| Some([w.parse().ok()?, h.parse().ok()?])))
         .unwrap_or([380.0, 820.0]);
+    let args: Vec<String> = std::env::args().skip(1).collect();
+    if let Some(code) = cli::run(&args) {
+        std::process::exit(code);
+    }
     let (core, events, wake) = Core::start();
     #[cfg(target_os = "linux")]
     let has_tray = {
@@ -1302,6 +1425,10 @@ fn main() -> eframe::Result {
     let has_tray = false;
 
     let remote = Rc::new(RefCell::new(Remote::new(core.clone(), events)));
+    // Started at login: stay in the tray until asked for.
+    if has_tray && args.iter().any(|a| a == "--hidden") && !matches!(wake.recv(), Ok(Wake::Open)) {
+        std::process::exit(0);
+    }
     loop {
         let options = eframe::NativeOptions {
             viewport: egui::ViewportBuilder::default()
