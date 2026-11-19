@@ -16,11 +16,11 @@ The four animated themes: Aurora, Starlight, Tide and Ember. [Watch them move](d
 
 - **Finds your Rokus automatically** (SSDP), or connect by IP address. Remembers the last device.
 - **Full remote:** Power, Home, Back, Options, D-pad and OK, Replay, Rewind, Play/Pause, Fast-forward.
-- **TV controls** (Roku TVs only): Volume up/down/mute, channel up/down, HDMI 1–4, AV and Antenna inputs, and separate TV on and TV off buttons.
+- **TV controls** (Roku TVs only): Volume up/down/mute with the current level and a slider to set it, channel up/down, HDMI 1–4, AV and Antenna inputs, and separate TV on and TV off buttons.
 - **Hold to repeat:** hold an arrow, volume or channel button and it keeps going.
 - **Sleep timer** (Roku TVs only): turn the TV off in 30, 60 or 90 minutes. It keeps counting with the window closed to the tray.
 - **Find remote:** makes the Roku remote beep, on devices that support it.
-- **Type into search boxes** from your keyboard instead of the on-screen keyboard.
+- **Type into search boxes** from your keyboard instead of the on-screen keyboard. Tick **Send each key as I type** and letters and Backspace reach the TV as you press them.
 - **Search the TV:** type a movie or show and press the magnifier to open the TV's own search, which looks across every channel.
 - **Wake TV:** if the TV has gone to sleep and off the network, the power button (or **Wake TV** at startup) wakes it over the network, on TVs that support it.
 - **Update notice:** tells you when a newer version is out. It asks GitHub once at startup and sends nothing about you or your TV; switch it off under Appearance.
@@ -31,8 +31,12 @@ The four animated themes: Aurora, Starlight, Tide and Ember. [Watch them move](d
 - **Appearance:** six color themes (Violet, Ocean, Forest, Sunset, Rose, Graphite) and four animated ones with a moving background (Aurora, Starlight, Tide, Ember), plus a switch for animated buttons. Your choice is remembered.
 - **Fits the window:** drag the window wider and the remote rearranges into two or three columns.
 - **Linux desktop integration:**
-  - **Tray icon:** play/pause, volume, mute, power and switching TVs without opening the window. Scroll on the icon to change the volume; click it to show or hide the remote. Closing the window keeps the remote in the tray.
+  - **Tray icon:** play/pause, volume, mute, power, the sleep timer, routines and switching TVs without opening the window. Scroll on the icon to change the volume; click it to show or hide the remote. Closing the window keeps the remote in the tray.
   - **Media controls:** the TV appears in your desktop's media controls (COSMIC, GNOME, KDE) with the channel's logo, and your keyboard's media keys control it.
+- **Routines:** several steps in one click, like TV on, HDMI 1, volume 20. Make them with **Edit** under Routines; run them from the window, the tray or a command.
+- **Mini mode:** the **Mini** button shrinks the window to a small strip with play and volume that stays above other windows (on Wayland, pin it yourself from the title bar; apps can't there).
+- **Start at login,** tucked in the tray (switch under Appearance), and a panel with the TV's model, software and network behind the **?** button.
+- **Commands for your own shortcuts:** `sofa-remote --key Mute`, `--volume 20`, `--launch 12` or `--routine "Movie night"` go straight to the TV connected last, so you can bind them to global keyboard shortcuts in your desktop's settings. `sofa-remote --help` lists the keys.
 - **Keyboard shortcuts:**
 
   | Key | Action |
@@ -84,6 +88,8 @@ Your computer and the Roku must be on the same network.
 ### Sharing media
 
 Install **Roku Media Player** on the TV (Home > Streaming Store > Roku Media Player > Add channel). Then click **Share a folder…** in the app. Media Player opens on the TV; choose **Sofa Remote (*your computer's name*)** and browse with the Roku remote.
+
+A video's subtitles are offered to the TV when a `.srt` or `.vtt` file with the same name sits beside it, and a `.jpg` or `.png` with the same name (or `folder.jpg` in a folder) is offered as its picture.
 
 The share is read-only, and only the folder you pick is visible. It answers only devices on your local network, never the internet, but anyone on the *same* network can browse it while it's shared (DLNA has no passwords). Share at home, not on public Wi-Fi, and press **Stop** when you're done.
 

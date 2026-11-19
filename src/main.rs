@@ -8,6 +8,7 @@ mod look;
 #[cfg(target_os = "linux")]
 mod mpris;
 mod pick;
+mod routines;
 mod share;
 #[cfg(target_os = "linux")]
 mod tray;
@@ -87,6 +88,13 @@ struct Remote {
     /// A volume picked on the slider and when to stop showing it in place
     /// of the TV's own: the TV steps there one press at a time.
     volume_set: Option<(u32, f64)>,
+    routines: Vec<routines::Routine>,
+    /// The routines are being edited rather than run.
+    routines_edit: bool,
+    /// The small always-on-top strip is showing instead of the full remote.
+    mini: bool,
+    /// The window's size before it shrank to the strip.
+    full_size: Option<Vec2>,
     /// Live typing: each key goes to the TV as it's typed.
     live: bool,
     /// What live typing has sent to the TV so far.
@@ -139,6 +147,10 @@ impl Remote {
             autostart: autostart::enabled(),
             audio: None,
             volume_set: None,
+            routines: core::saved_routines(),
+            routines_edit: std::env::var_os("SOFA_REMOTE_ROUTINES").is_some(),
+            mini: std::env::var_os("SOFA_REMOTE_MINI").is_some(),
+            full_size: None,
             live: core::flag("live", false),
             live_sent: String::new(),
             picking: None,
@@ -202,6 +214,7 @@ impl Remote {
     /// while it was closed.
     fn reopened(&mut self) {
         self.title.clear();
+        self.mini = std::env::var_os("SOFA_REMOTE_MINI").is_some();
         self.now = self.core.state.lock().unwrap().now.clone();
     }
 
@@ -1066,6 +1079,172 @@ impl Remote {
         self.youtube(ui);
         ui.add_space(4.0);
         self.share(ui);
+        ui.add_space(4.0);
+        self.routines(ui);
+    }
+
+    /// Routines: a button each to run them, or the editor.
+    fn routines(&mut self, ui: &mut egui::Ui) {
+        let weak = |t: &str| egui::RichText::new(t).small().color(look::pal().weak);
+        ui.horizontal(|ui| {
+            ui.label(egui::RichText::new("ROUTINES").small().strong().color(look::pal().weak));
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                let label = if self.routines_edit { "Done" } else { "Edit" };
+                if look::text_key(ui, vec2(48.0, 22.0), label, self.routines_edit).on_hover_text("Make or change routines").clicked() {
+                    self.routines_edit = !self.routines_edit;
+                }
+            });
+        });
+        if !self.routines_edit {
+            if self.routines.is_empty() {
+                ui.add(egui::Label::new(weak("Several steps in one click, like TV on, HDMI 1, volume 20. Click Edit to make one.")).wrap());
+                return;
+            }
+            let mut run = None;
+            ui.horizontal_wrapped(|ui| {
+                for r in &self.routines {
+                    let steps = r.steps.iter().map(|s| s.label()).collect::<Vec<_>>().join(", ");
+                    if ui.add(egui::Button::new(&r.name).min_size(vec2(0.0, 32.0))).on_hover_text(steps).clicked() {
+                        run = Some(r.clone());
+                    }
+                }
+            });
+            if let Some(r) = run {
+                self.core.routine(r.steps);
+                self.error = false;
+                self.status = format!("Running “{}”…", r.name);
+            }
+            return;
+        }
+        let before = self.routines.clone();
+        let apps = self.apps.clone();
+        let mut delete = None;
+        for (i, r) in self.routines.iter_mut().enumerate() {
+            egui::Frame::new().fill(look::pal().body).corner_radius(16).inner_margin(egui::Margin::same(12)).show(ui, |ui| {
+                ui.set_width(ui.available_width());
+                ui.spacing_mut().item_spacing.y = 6.0;
+                ui.horizontal(|ui| {
+                    ui.add(egui::TextEdit::singleline(&mut r.name).hint_text("Name").desired_width(ui.available_width() - 70.0));
+                    if ui.small_button("Delete").on_hover_text("Delete this routine").clicked() {
+                        delete = Some(i);
+                    }
+                });
+                let mut remove = None;
+                for (j, step) in r.steps.iter_mut().enumerate() {
+                    ui.horizontal(|ui| {
+                        ui.label(weak(&format!("{}.", j + 1)));
+                        match step {
+                            routines::Step::Volume(v) => {
+                                ui.label("Volume");
+                                ui.add(egui::DragValue::new(v).range(0..=100));
+                            }
+                            routines::Step::Sleep(m) => {
+                                ui.label("Sleep timer");
+                                ui.add(egui::DragValue::new(m).range(5..=240).suffix(" min"));
+                            }
+                            routines::Step::Wait(s) => {
+                                ui.label("Wait");
+                                ui.add(egui::DragValue::new(s).range(1..=60).suffix(" s"));
+                            }
+                            other => {
+                                ui.label(other.label());
+                            }
+                        }
+                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                            if ui.small_button("×").on_hover_text("Remove this step").clicked() {
+                                remove = Some(j);
+                            }
+                        });
+                    });
+                }
+                if let Some(j) = remove {
+                    r.steps.remove(j);
+                }
+                ui.menu_button("Add a step…", |ui| {
+                    let mut add = None;
+                    for (key, label) in routines::KEYS {
+                        if ui.button(label).clicked() {
+                            add = Some(routines::Step::Key(key));
+                        }
+                    }
+                    ui.separator();
+                    for (label, step) in [("Volume", routines::Step::Volume(20)), ("Sleep timer", routines::Step::Sleep(60)), ("Wait", routines::Step::Wait(5))] {
+                        if ui.button(label).clicked() {
+                            add = Some(step);
+                        }
+                    }
+                    if !apps.is_empty() {
+                        ui.menu_button("Open a channel", |ui| {
+                            egui::ScrollArea::vertical().max_height(260.0).show(ui, |ui| {
+                                for app in &apps {
+                                    if ui.button(&app.name).clicked() {
+                                        add = Some(routines::Step::Launch(app.id.clone(), app.name.clone()));
+                                    }
+                                }
+                            });
+                        });
+                    }
+                    if let Some(step) = add {
+                        r.steps.push(step);
+                        ui.close();
+                    }
+                });
+            });
+        }
+        if let Some(i) = delete {
+            self.routines.remove(i);
+        }
+        if ui.add(egui::Button::new("New routine").min_size(vec2(0.0, 32.0))).clicked() {
+            self.routines.push(routines::Routine { name: "New routine".into(), steps: Vec::new() });
+        }
+        if self.routines != before {
+            core::save_routines(&self.routines);
+            refresh_tray();
+        }
+    }
+
+    /// Shrink to a small strip that stays above other windows, or back.
+    fn set_mini(&mut self, ctx: &egui::Context, mini: bool) {
+        use egui::ViewportCommand as V;
+        self.mini = mini;
+        if mini {
+            self.full_size = ctx.input(|i| i.viewport().inner_rect.map(|r| r.size()));
+            ctx.send_viewport_cmd(V::MinInnerSize(MINI_SIZE));
+            ctx.send_viewport_cmd(V::InnerSize(MINI_SIZE));
+            ctx.send_viewport_cmd(V::WindowLevel(egui::WindowLevel::AlwaysOnTop));
+        } else {
+            ctx.send_viewport_cmd(V::WindowLevel(egui::WindowLevel::Normal));
+            ctx.send_viewport_cmd(V::InnerSize(self.full_size.unwrap_or(FULL_SIZE)));
+            ctx.send_viewport_cmd(V::MinInnerSize(MIN_SIZE));
+        }
+    }
+
+    /// The strip: what's on, and the keys used most.
+    fn mini_ui(&mut self, ui: &mut egui::Ui) {
+        let is_tv = self.device.as_ref().is_some_and(|d| d.is_tv);
+        let line = match (&self.device, &self.now) {
+            (Some(dev), Some(now)) => format!("{}  ·  {}", now.app, dev.name),
+            (Some(dev), None) => dev.name.clone(),
+            (None, _) => "Not connected".into(),
+        };
+        ui.vertical_centered(|ui| ui.add(egui::Label::new(egui::RichText::new(line).small().color(look::pal().weak)).truncate()));
+        let (k, gap) = (vec2(48.0, 40.0), ui.spacing().item_spacing.x);
+        let keys: &[(Icon, &'static str, &str)] = if is_tv {
+            &[(Icon::Play, "Play", "Play / Pause"), (Icon::VolDown, "VolumeDown", "Volume down"), (Icon::Mute, "VolumeMute", "Mute"), (Icon::VolUp, "VolumeUp", "Volume up")]
+        } else {
+            &[(Icon::Rev, "Rev", "Rewind"), (Icon::Play, "Play", "Play / Pause"), (Icon::Fwd, "Fwd", "Fast forward")]
+        };
+        let n = keys.len() as f32 + 1.0;
+        centered_row(ui, n * k.x + (n - 1.0) * gap, |ui| {
+            ui.add_enabled_ui(self.device.is_some(), |ui| {
+                for (icon, key, tip) in keys {
+                    self.icon_key(ui, k, *icon, key, tip);
+                }
+            });
+            if look::text_key(ui, k, "Full", false).on_hover_text("Back to the full remote").clicked() {
+                self.set_mini(ui.ctx(), false);
+            }
+        });
     }
 
     fn channels(&mut self, ui: &mut egui::Ui) {
@@ -1197,6 +1376,10 @@ impl Remote {
         }
     }
 }
+
+const FULL_SIZE: Vec2 = vec2(380.0, 820.0);
+const MIN_SIZE: Vec2 = vec2(340.0, 560.0);
+const MINI_SIZE: Vec2 = vec2(300.0, 92.0);
 
 /// Window widths where the layout gains a second and a third column.
 const TWO_COLUMNS: f32 = 560.0;
@@ -1331,10 +1514,21 @@ impl Remote {
         self.poll(&ui.ctx().clone());
         self.shortcuts(ui);
         self.take_screenshot(ui);
+        if self.mini {
+            egui::CentralPanel::default().frame(egui::Frame::new().fill(look::pal().bg).inner_margin(egui::Margin::same(10))).show(ui, |ui| {
+                look::backdrop(ui, ui.max_rect().expand(10.0));
+                self.mini_ui(ui);
+            });
+            return;
+        }
         egui::Panel::bottom("status")
             .frame(egui::Frame::new().fill(look::pal().body).inner_margin(egui::Margin::symmetric(14, 8)))
             .show(ui, |ui| {
                 ui.horizontal(|ui| {
+                    let mini = look::text_key(ui, vec2(44.0, 22.0), "Mini", false);
+                    if mini.on_hover_text("Shrink to a small strip with play and volume").clicked() {
+                        self.set_mini(ui.ctx(), true);
+                    }
                     if self.busy {
                         ui.spinner();
                     }
@@ -1408,7 +1602,7 @@ fn main() -> eframe::Result {
     let size = std::env::var("SOFA_REMOTE_SIZE")
         .ok()
         .and_then(|s| s.split_once('x').and_then(|(w, h)| Some([w.parse().ok()?, h.parse().ok()?])))
-        .unwrap_or([380.0, 820.0]);
+        .unwrap_or(FULL_SIZE.into());
     let args: Vec<String> = std::env::args().skip(1).collect();
     if let Some(code) = cli::run(&args) {
         std::process::exit(code);
@@ -1433,7 +1627,7 @@ fn main() -> eframe::Result {
         let options = eframe::NativeOptions {
             viewport: egui::ViewportBuilder::default()
                 .with_inner_size(size)
-                .with_min_inner_size([340.0, 560.0])
+                .with_min_inner_size(if std::env::var_os("SOFA_REMOTE_MINI").is_some() { MINI_SIZE } else { MIN_SIZE })
                 .with_icon(eframe::icon_data::from_png_bytes(include_bytes!("../assets/icon.png")).unwrap_or_default())
                 .with_app_id("io.github.billy1204.sofa-remote"),
             renderer: eframe::Renderer::Glow,

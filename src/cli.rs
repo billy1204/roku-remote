@@ -1,7 +1,7 @@
 //! One-shot commands such as `sofa-remote --key Mute`, for binding to the
 //! desktop's keyboard shortcuts. They go straight to the TV connected last;
 //! the app needn't be running.
-use crate::{core, ecp};
+use crate::{core, ecp, routines};
 
 const KEYS: [&str; 30] = [
     "Home", "Back", "Select", "Up", "Down", "Left", "Right", "Play", "Rev", "Fwd", "InstantReplay", "Info", "Backspace", "Enter", "Search",
@@ -17,6 +17,7 @@ const HELP: &str = "Sofa Remote
   sofa-remote --key NAME      press a key on the TV connected last
   sofa-remote --volume 0-100  set the TV's volume
   sofa-remote --launch ID     open a channel by its id
+  sofa-remote --routine NAME  run one of your routines
 
 Keys: Home Back Select Up Down Left Right Play Rev Fwd InstantReplay Info
 Backspace Enter Search VolumeUp VolumeDown Mute Power PowerOn PowerOff
@@ -51,6 +52,12 @@ pub fn run(args: &[String]) -> Option<i32> {
         ("--launch", Some(id)) if !id.is_empty() && id.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'.' || b == b'_') => {
             host().and_then(|h| ecp::launch(&h, id))
         }
+        ("--routine", Some(name)) => match core::saved_routines().into_iter().find(|r| r.name.eq_ignore_ascii_case(name)) {
+            Some(routine) => host().and_then(|h| {
+                routines::run(&h, &routine.steps, &|_| eprintln!("sofa-remote: the sleep timer step needs the app; run the routine from its window or tray"))
+            }),
+            None => Err(format!("no routine called {name}")),
+        },
         _ => Err("unknown command; see --help".into()),
     };
     Some(match result {

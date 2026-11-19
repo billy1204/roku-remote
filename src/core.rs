@@ -1,6 +1,7 @@
 //! Everything that outlives the window: the network worker, the now-playing
 //! poller and the state the tray and desktop media controls read.
 use crate::ecp;
+use crate::routines::{self, Routine, Step};
 use crate::share::{self, Share};
 use eframe::egui;
 use std::path::{Path, PathBuf};
@@ -22,6 +23,8 @@ pub enum Cmd {
     Wake(String, [u8; 6]),
     /// Step the TV's volume to a level.
     Volume(String, u32),
+    /// Run a routine's steps in order.
+    Routine(String, Vec<Step>),
 }
 
 pub enum Event {
@@ -157,6 +160,13 @@ impl Core {
         self.repaint();
     }
 
+    /// Run a routine on the current device, if any.
+    pub fn routine(&self, steps: Vec<Step>) {
+        if let Some(dev) = &self.state.lock().unwrap().device {
+            let _ = self.cmd.send(Cmd::Routine(dev.host.clone(), steps));
+        }
+    }
+
     /// Minutes until the sleep timer turns the TV off.
     pub fn sleep_left(&self) -> Option<u64> {
         let (at, _) = self.state.lock().unwrap().sleep?;
@@ -230,6 +240,9 @@ impl Core {
                     }
                 },
                 Cmd::Wake(host, mac) => self.wake(&host, mac, &ev_tx),
+                Cmd::Routine(host, steps) => {
+                    routines::run(&host, &steps, &|minutes| self.set_sleep(Some(minutes))).map_or_else(Event::Error, |_| Event::Ok)
+                }
                 Cmd::Volume(host, level) => ecp::set_volume(&host, level).map_or_else(Event::Error, |_| Event::Ok),
                 Cmd::Search(host, text) => ecp::search(&host, &text).map_or_else(Event::Error, |_| Event::Ok),
                 Cmd::Text(host, text) => ecp::type_text(&host, &text).map_or_else(Event::Error, |_| Event::Ok),
@@ -380,6 +393,14 @@ fn save(name: &str, value: &str) {
         let _ = std::fs::create_dir_all(path.parent().unwrap());
         let _ = std::fs::write(path, value);
     }
+}
+
+pub fn saved_routines() -> Vec<Routine> {
+    saved("routines").map(|text| routines::parse(&text)).unwrap_or_default()
+}
+
+pub fn save_routines(list: &[Routine]) {
+    save("routines", &routines::format(list));
 }
 
 /// An on/off setting; `default` until it's first changed.

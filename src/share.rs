@@ -393,6 +393,10 @@ impl Server {
         while !self.stopped()
             && let Some(req) = read_request(&mut r)?
         {
+            // Dev aid: SOFA_REMOTE_LOG=1 prints what the TV asks for.
+            if std::env::var_os("SOFA_REMOTE_LOG").is_some() {
+                eprintln!("{peer} {} {}", req.method, req.path);
+            }
             if !host_ok(req.headers.get("host").map(String::as_str)) {
                 respond(&mut w, "403 Forbidden", "text/plain", "", b"forbidden")?;
                 break;
@@ -456,7 +460,22 @@ impl Server {
         }
         let path = fs::canonicalize(self.root.join(rel)).ok()?;
         let inside = path.strip_prefix(&self.root).ok()?;
-        (!hidden(rel) && !hidden(inside) && (path.is_dir() || mime(&path).is_some())).then_some(path)
+        (!hidden(rel) && !hidden(inside) && (path.is_dir() || mime(&path).is_some() || subtitle_mime(&path).is_some())).then_some(path)
+    }
+
+    /// Where the TV fetches `path` from.
+    fn url_of(&self, path: &Path) -> String {
+        format!("{}/media/{}", self.base, percent_encode(&self.id_of(path)))
+    }
+
+    /// A picture to show for `path`: one beside it with the same name, or
+    /// the folder's own cover (a folder's is inside it).
+    fn art(&self, path: &Path) -> Option<PathBuf> {
+        let dir = if path.is_dir() { path } else { path.parent()? };
+        sidecar(path, &["jpg", "jpeg", "png"])
+            .filter(|_| !path.is_dir())
+            .or_else(|| ["folder.jpg", "cover.jpg", "poster.jpg"].iter().map(|n| dir.join(n)).find(|p| p.is_file()))
+            .filter(|art| art != path)
     }
 
     fn id_of(&self, path: &Path) -> String {
@@ -493,7 +512,7 @@ impl Server {
 
     fn browse(&self, id: &str, flag: &str, start: usize, count: usize) -> (String, usize, usize) {
         let mut didl = String::from(
-            r#"<DIDL-Lite xmlns="urn:schemas-upnp-org:metadata-1-0/DIDL-Lite/" xmlns:dc="http://purl.org/dc/elements/1.1/" xmlns:upnp="urn:schemas-upnp-org:metadata-1-0/upnp/">"#,
+            r#"<DIDL-Lite xmlns="urn:schemas-upnp-org:metadata-1-0/DIDL-Lite/" xmlns:dc="http://purl.org/dc/elements/1.1/" xmlns:upnp="urn:schemas-upnp-org:metadata-1-0/upnp/" xmlns:sec="http://www.sec.co.kr/">"#,
         );
         let (returned, total) = match self.resolve(id) {
             None => (0, 0),
@@ -536,10 +555,11 @@ impl Server {
             path.file_stem().or(path.file_name()).map(|n| n.to_string_lossy().into_owned()).unwrap_or_default()
         };
         let (eid, parent, title) = (xml_escape(&id), xml_escape(&parent), xml_escape(&title));
+        let art = self.art(path).map(|a| format!("<upnp:albumArtURI>{}</upnp:albumArtURI>", xml_escape(&self.url_of(&a)))).unwrap_or_default();
         if path.is_dir() {
             let n = self.children(path).len();
             return format!(
-                r#"<container id="{eid}" parentID="{parent}" restricted="1" childCount="{n}"><dc:title>{title}</dc:title><upnp:class>object.container.storageFolder</upnp:class></container>"#
+                r#"<container id="{eid}" parentID="{parent}" restricted="1" childCount="{n}"><dc:title>{title}</dc:title><upnp:class>object.container.storageFolder</upnp:class>{art}</container>"#
             );
         }
         let mime = mime(path).unwrap_or("application/octet-stream");
@@ -549,10 +569,16 @@ impl Server {
             _ => "object.item.imageItem.photo",
         };
         let size = fs::metadata(path).map(|m| m.len()).unwrap_or(0);
-        let url = format!("{}/media/{}", self.base, percent_encode(&id));
+        // Subtitles beside a video, in the two ways players look for them.
+        let captions = subtitles(path, mime)
+            .map(|(sub, kind, sub_mime)| {
+                let url = xml_escape(&self.url_of(&sub));
+                format!(r#"<res protocolInfo="http-get:*:{sub_mime}:*">{url}</res><sec:CaptionInfoEx sec:type="{kind}">{url}</sec:CaptionInfoEx>"#)
+            })
+            .unwrap_or_default();
         format!(
-            r#"<item id="{eid}" parentID="{parent}" restricted="1"><dc:title>{title}</dc:title><upnp:class>{class}</upnp:class><res protocolInfo="http-get:*:{mime}:{DLNA_FLAGS}" size="{size}">{}</res></item>"#,
-            xml_escape(&url)
+            r#"<item id="{eid}" parentID="{parent}" restricted="1"><dc:title>{title}</dc:title><upnp:class>{class}</upnp:class>{art}<res protocolInfo="http-get:*:{mime}:{DLNA_FLAGS}" size="{size}">{}</res>{captions}</item>"#,
+            xml_escape(&self.url_of(path))
         )
     }
 
@@ -560,7 +586,7 @@ impl Server {
         let Some(path) = self.resolve(&percent_decode(encoded)).filter(|p| p.is_file()) else {
             return respond(w, "404 Not Found", "text/plain", "", b"not found");
         };
-        let mime = mime(&path).unwrap_or("application/octet-stream");
+        let mime = mime(&path).or(subtitle_mime(&path)).unwrap_or("application/octet-stream");
         let mut file = fs::File::open(&path)?;
         let size = file.metadata()?.len();
         let range = req.headers.get("range").and_then(|r| parse_range(r, size));
@@ -577,6 +603,9 @@ impl Server {
         );
         if range.is_some() {
             head.push_str(&format!("Content-Range: bytes {from}-{to}/{size}\r\n"));
+        }
+        if let Some((sub, _, _)) = subtitles(&path, mime) {
+            head.push_str(&format!("CaptionInfo.sec: {}\r\n", self.url_of(&sub)));
         }
         head.push_str("\r\n");
         w.write_all(head.as_bytes())?;
@@ -660,6 +689,30 @@ const MIMES: &[(&str, &str)] = &[
     ("png", "image/png"),
     ("gif", "image/gif"),
 ];
+
+/// Subtitle files, served beside their video but not listed.
+fn subtitle_mime(path: &Path) -> Option<&'static str> {
+    match path.extension()?.to_string_lossy().to_lowercase().as_str() {
+        "srt" => Some("text/srt"),
+        "vtt" => Some("text/vtt"),
+        _ => None,
+    }
+}
+
+/// A file beside `path` with the same name and one of these extensions.
+fn sidecar(path: &Path, extensions: &[&str]) -> Option<PathBuf> {
+    extensions.iter().map(|e| path.with_extension(e)).find(|p| p.is_file())
+}
+
+/// A video's subtitle file, its kind and its type.
+fn subtitles(path: &Path, mime: &str) -> Option<(PathBuf, &'static str, &'static str)> {
+    if !mime.starts_with("video/") {
+        return None;
+    }
+    let sub = sidecar(path, &["srt", "vtt"])?;
+    let kind = if sub.extension().is_some_and(|e| e == "vtt") { "vtt" } else { "srt" };
+    Some((sub, kind, if kind == "vtt" { "text/vtt" } else { "text/srt" }))
+}
 
 fn mime(path: &Path) -> Option<&'static str> {
     let ext = path.extension()?.to_string_lossy().to_lowercase();
@@ -770,6 +823,17 @@ const CM_SCPD: &str = r#"<?xml version="1.0" encoding="utf-8"?>
 #[cfg(test)]
 mod tests {
     use super::{Share, hidden, host_ok, is_local, parse_range};
+
+    /// By hand: `SOFA_REMOTE_TEST_SHARE=folder SOFA_REMOTE_LOG=1 cargo test
+    /// serve_for_tv -- --ignored --nocapture` shares a folder for a few
+    /// minutes and prints what the TV asks for.
+    #[test]
+    #[ignore]
+    fn serve_for_tv() {
+        let folder = std::env::var("SOFA_REMOTE_TEST_SHARE").expect("set SOFA_REMOTE_TEST_SHARE to a folder");
+        let _share = Share::start(Path::new(&folder)).unwrap();
+        std::thread::sleep(std::time::Duration::from_secs(240));
+    }
     use std::io::{Read, Write};
     use std::path::Path;
 
@@ -795,7 +859,7 @@ mod tests {
     fn serves_only_visible_media() {
         let dir = std::env::temp_dir().join(format!("sofa-remote-test-{}", std::process::id()));
         std::fs::create_dir_all(dir.join(".secret")).unwrap();
-        for f in ["a.mp4", "notes.txt", ".hidden.mp4", ".secret/b.mp4"] {
+        for f in ["a.mp4", "a.srt", "a.jpg", "notes.txt", ".hidden.mp4", ".secret/b.mp4"] {
             std::fs::write(dir.join(f), b"data").unwrap();
         }
         // Without a network there's nothing to share on.
@@ -809,6 +873,10 @@ mod tests {
         };
         let host = format!("127.0.0.1:{}", share.port);
         assert_eq!(get("/media/a.mp4", &host), "200");
+        assert_eq!(get("/media/a.srt", &host), "200");
+        let listing = share.server.browse("0", "BrowseDirectChildren", 0, 0).0;
+        assert!(listing.contains("text/srt") && listing.contains("a.srt"), "{listing}");
+        assert!(listing.contains("albumArtURI") && listing.contains("a.jpg"), "{listing}");
         assert_eq!(get("/media/notes.txt", &host), "404");
         assert_eq!(get("/media/.hidden.mp4", &host), "404");
         assert_eq!(get("/media/.secret/b.mp4", &host), "404");

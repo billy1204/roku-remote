@@ -134,6 +134,11 @@ impl ksni::Tray for Tray {
         if is_tv {
             items.push(self.sleep_menu());
         }
+        let routines = crate::core::saved_routines();
+        if connected && !routines.is_empty() {
+            let submenu = routines.into_iter().map(|r| item(&r.name, "", true, move |t| t.core.routine(r.steps.clone()))).collect();
+            items.push(SubMenu { label: "Routines".into(), icon_name: "media-playlist-repeat".into(), submenu, ..Default::default() }.into());
+        }
         if !found.is_empty() {
             let selected = device.as_ref().and_then(|d| found.iter().position(|f| f.host == d.host)).unwrap_or(usize::MAX);
             let hosts: Vec<String> = found.iter().map(|d| d.host.clone()).collect();
