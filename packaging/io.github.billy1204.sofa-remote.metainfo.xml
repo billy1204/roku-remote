@@ -56,6 +56,12 @@
   </screenshots>
   <content_rating type="oars-1.1" />
   <releases>
+    <release version="0.11.0" date="2026-11-19">
+      <url type="details">https://github.com/billy1204/sofa-remote/releases/tag/v0.11.0</url>
+      <description>
+        <p>New: search every channel from the app, hold buttons to repeat, channel up and down, more inputs, a sleep timer, a channel filter with pinning, waking a sleeping TV and a notice when a newer version is out. Folder sharing is safer: it serves only visible media files and Stop ends playback at once.</p>
+      </description>
+    </release>
     <release version="0.10.1" date="2026-11-15">
       <url type="details">https://github.com/billy1204/sofa-remote/releases/tag/v0.10.1</url>
       <description>
