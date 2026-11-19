@@ -20,3 +20,8 @@ accepted = [
 targets = ["x86_64-unknown-linux-gnu", "x86_64-pc-windows-msvc"]
 ignore-build-dependencies = true
 ignore-dev-dependencies = true
+
+# Not compiled into either build (it belongs to a Linux-only part of the
+# Windows tray library), but cargo-about counts it anyway.
+[option-ext]
+accepted = ["MPL-2.0"]
