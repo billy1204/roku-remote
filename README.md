@@ -16,9 +16,12 @@ The four animated themes: Aurora, Starlight, Tide and Ember. [Watch them move](d
 
 - **Finds your Rokus automatically** (SSDP), or connect by IP address. Remembers the last device.
 - **Full remote:** Power, Home, Back, Options, D-pad and OK, Replay, Rewind, Play/Pause, Fast-forward.
-- **TV controls** (Roku TVs only): Volume up/down/mute and HDMI 1–3/Antenna inputs.
+- **TV controls** (Roku TVs only): Volume up/down/mute, channel up/down, HDMI 1–4, AV and Antenna inputs, and separate TV on and TV off buttons.
+- **Hold to repeat:** hold an arrow, volume or channel button and it keeps going.
+- **Sleep timer** (Roku TVs only): turn the TV off in 30, 60 or 90 minutes. It keeps counting with the window closed to the tray.
+- **Find remote:** makes the Roku remote beep, on devices that support it.
 - **Type into search boxes** from your keyboard instead of the on-screen keyboard.
-- **Channel launcher:** a button for every installed channel.
+- **Channel launcher:** a button for every installed channel. Type in **Filter** to narrow the list, and right-click a channel to pin it to the top.
 - **Now playing:** the current channel, play state and progress, in the window and the title bar.
 - **Play YouTube links:** paste a YouTube link (watch, youtu.be, Shorts or live) with **Ctrl+V** and the TV's YouTube channel opens and plays it. (Right-click paste doesn't work in the app's text boxes.)
 - **Share media:** pick a folder and play its videos, music and photos on the TV with Roku's free **Roku Media Player** channel. The **?** button explains the setup, checks that Media Player is on the TV and warns if a firewall may keep the TV out. The tray can start and stop sharing too.
@@ -41,6 +44,7 @@ The four animated themes: Aurora, Starlight, Tide and Ember. [Watch them move](d
   | I | Options |
   | `+` / `-` | Volume up / down |
   | M | Mute |
+  | Page Up / Page Down | Channel up / down |
 
 ## Setting up your Roku
 

@@ -13,6 +13,8 @@ pub struct Device {
     pub is_tv: bool,
     /// "Control by mobile apps" is Limited: only volume keys are accepted.
     pub limited: bool,
+    /// The physical remote can be made to beep.
+    pub find_remote: bool,
 }
 
 #[derive(Clone, Debug)]
@@ -146,6 +148,7 @@ pub fn device_info(host: &str) -> Result<Device, String> {
         name,
         is_tv: tag(&xml, "is-tv") == Some("true"),
         limited: tag(&xml, "ecp-setting-mode") == Some("limited"),
+        find_remote: tag(&xml, "supports-find-remote") == Some("true"),
     })
 }
 
@@ -186,7 +189,7 @@ pub fn discover() -> Vec<Device> {
             }
         }
     }
-    hosts.iter().map(|h| device_info(h).unwrap_or(Device { host: h.clone(), name: h.clone(), is_tv: false, limited: false })).collect()
+    hosts.iter().map(|h| device_info(h).unwrap_or(Device { host: h.clone(), name: h.clone(), is_tv: false, limited: false, find_remote: false })).collect()
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq)]

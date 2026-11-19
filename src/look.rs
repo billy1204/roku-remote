@@ -454,8 +454,8 @@ pub fn text_key(ui: &mut egui::Ui, size: Vec2, text: &str, lit: bool) -> Respons
     })
 }
 
-/// Round directional pad. Returns the key clicked, if any.
-pub fn dpad(ui: &mut egui::Ui, diameter: f32, lit: Option<&str>) -> Option<&'static str> {
+/// Round directional pad. Returns the key clicked and the key held down, if any.
+pub fn dpad(ui: &mut egui::Ui, diameter: f32, lit: Option<&str>) -> (Option<&'static str>, Option<&'static str>) {
     let (rect, resp) = ui.allocate_exact_size(Vec2::splat(diameter), Sense::click());
     let c = rect.center();
     let r = diameter / 2.0;
@@ -480,7 +480,7 @@ pub fn dpad(ui: &mut egui::Ui, diameter: f32, lit: Option<&str>) -> Option<&'sta
     let hover = resp.hover_pos().and_then(zone);
     let held = if resp.is_pointer_button_down_on() { hover } else { None };
     if !ui.is_rect_visible(rect) {
-        return None;
+        return (None, None);
     }
     let p = ui.painter();
     p.circle_filled(c + vec2(0.0, 3.0), r, Color32::from_black_alpha(80));
@@ -530,7 +530,7 @@ pub fn dpad(ui: &mut egui::Ui, diameter: f32, lit: Option<&str>) -> Option<&'sta
     if hover.is_some() {
         ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
     }
-    clicked
+    (clicked, held)
 }
 
 /// An on/off switch whose knob slides across.

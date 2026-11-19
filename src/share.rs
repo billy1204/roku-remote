@@ -136,6 +136,24 @@ fn is_local(ip: IpAddr) -> bool {
     }
 }
 
+/// Whether `rel`, a path inside the shared folder, has a hidden part.
+fn hidden(rel: &Path) -> bool {
+    rel.components().any(|c| c.as_os_str().to_string_lossy().starts_with('.'))
+}
+
+/// Whether a request's Host header is a plain address, as a TV sends. A
+/// website reaching us through the user's browser (DNS rebinding) has to
+/// use a name instead.
+fn host_ok(host: Option<&str>) -> bool {
+    host.is_none_or(|h| h.parse::<SocketAddr>().is_ok() || h.trim_matches(['[', ']']).parse::<IpAddr>().is_ok())
+}
+
+/// Whether `firewall` can see this computer's firewall; a Flatpak sandbox
+/// hides it.
+pub fn firewall_checkable() -> bool {
+    !Path::new("/.flatpak-info").exists()
+}
+
 /// What the TV lists the share as.
 pub fn server_name() -> String {
     format!("Sofa Remote ({})", hostname())
@@ -367,12 +385,18 @@ fn respond(w: &mut impl Write, status: &str, ctype: &str, extra: &str, body: &[u
 impl Server {
     fn handle(&self, stream: TcpStream) -> io::Result<()> {
         stream.set_read_timeout(Some(Duration::from_secs(30)))?;
+        // A device that stops reading mustn't hold its connection forever.
+        stream.set_write_timeout(Some(Duration::from_secs(30)))?;
         let peer = stream.peer_addr().map(|a| a.ip().to_string()).unwrap_or_default();
         let mut w = stream.try_clone()?;
         let mut r = BufReader::new(stream);
         while !self.stopped()
             && let Some(req) = read_request(&mut r)?
         {
+            if !host_ok(req.headers.get("host").map(String::as_str)) {
+                respond(&mut w, "403 Forbidden", "text/plain", "", b"forbidden")?;
+                break;
+            }
             self.seen.lock().unwrap().insert(peer.clone(), Instant::now());
             let path = req.path.split('?').next().unwrap_or_default().to_string();
             let action = req.headers.get("soapaction").cloned().unwrap_or_default();
@@ -420,7 +444,8 @@ impl Server {
     }
 
     /// The folder, or a file in it, for an object ID: "0" is the root, other
-    /// IDs are paths relative to it. None for anything outside the folder.
+    /// IDs are paths relative to it. None for anything outside the folder,
+    /// hidden, or neither a folder nor media: only what the listing shows.
     fn resolve(&self, id: &str) -> Option<PathBuf> {
         if id == "0" {
             return Some(self.root.clone());
@@ -430,7 +455,8 @@ impl Server {
             return None;
         }
         let path = fs::canonicalize(self.root.join(rel)).ok()?;
-        path.starts_with(&self.root).then_some(path)
+        let inside = path.strip_prefix(&self.root).ok()?;
+        (!hidden(rel) && !hidden(inside) && (path.is_dir() || mime(&path).is_some())).then_some(path)
     }
 
     fn id_of(&self, path: &Path) -> String {
@@ -556,7 +582,22 @@ impl Server {
         w.write_all(head.as_bytes())?;
         if req.method == "GET" {
             file.seek(SeekFrom::Start(from))?;
-            io::copy(&mut file.take(len), w)?;
+            // In pieces, so Stop ends a transfer that's under way.
+            let mut buf = vec![0u8; 64 * 1024];
+            let mut left = len;
+            while left > 0 && !self.stopped() {
+                let want = left.min(buf.len() as u64) as usize;
+                let n = file.read(&mut buf[..want])?;
+                if n == 0 {
+                    break;
+                }
+                w.write_all(&buf[..n])?;
+                left -= n as u64;
+            }
+            if left > 0 {
+                // The reply is short; close the connection rather than reuse it.
+                return Err(io::ErrorKind::Interrupted.into());
+            }
         }
         w.flush()
     }
@@ -728,7 +769,54 @@ const CM_SCPD: &str = r#"<?xml version="1.0" encoding="utf-8"?>
 
 #[cfg(test)]
 mod tests {
-    use super::{is_local, parse_range};
+    use super::{Share, hidden, host_ok, is_local, parse_range};
+    use std::io::{Read, Write};
+    use std::path::Path;
+
+    #[test]
+    fn hidden_paths() {
+        assert!(hidden(Path::new(".ssh/id_rsa")));
+        assert!(hidden(Path::new("Videos/.trash/a.mp4")));
+        assert!(!hidden(Path::new("Videos/a.b.mp4")));
+    }
+
+    #[test]
+    fn hosts() {
+        for h in [None, Some("192.168.1.20:8200"), Some("192.168.1.20"), Some("127.0.0.1:8200"), Some("[::1]:8200")] {
+            assert!(host_ok(h), "{h:?}");
+        }
+        for h in [Some("evil.example:8200"), Some("evil.example"), Some("localhost:8200"), Some("")] {
+            assert!(!host_ok(h), "{h:?}");
+        }
+    }
+
+    /// The share over real HTTP: media is served, everything else isn't.
+    #[test]
+    fn serves_only_visible_media() {
+        let dir = std::env::temp_dir().join(format!("sofa-remote-test-{}", std::process::id()));
+        std::fs::create_dir_all(dir.join(".secret")).unwrap();
+        for f in ["a.mp4", "notes.txt", ".hidden.mp4", ".secret/b.mp4"] {
+            std::fs::write(dir.join(f), b"data").unwrap();
+        }
+        // Without a network there's nothing to share on.
+        let Ok(share) = Share::start(&dir) else { return };
+        let get = |path: &str, host: &str| {
+            let mut s = std::net::TcpStream::connect(("127.0.0.1", share.port)).unwrap();
+            write!(s, "GET {path} HTTP/1.1\r\nHost: {host}\r\nConnection: close\r\n\r\n").unwrap();
+            let mut reply = String::new();
+            s.read_to_string(&mut reply).unwrap();
+            reply.split_whitespace().nth(1).unwrap_or_default().to_string()
+        };
+        let host = format!("127.0.0.1:{}", share.port);
+        assert_eq!(get("/media/a.mp4", &host), "200");
+        assert_eq!(get("/media/notes.txt", &host), "404");
+        assert_eq!(get("/media/.hidden.mp4", &host), "404");
+        assert_eq!(get("/media/.secret/b.mp4", &host), "404");
+        assert_eq!(get("/media/..%2Fa.mp4", &host), "404");
+        assert_eq!(get("/media/a.mp4", "evil.example"), "403");
+        drop(share);
+        let _ = std::fs::remove_dir_all(dir);
+    }
 
     #[test]
     fn only_local_addresses() {

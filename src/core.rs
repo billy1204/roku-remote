@@ -6,7 +6,7 @@ use eframe::egui;
 use std::path::{Path, PathBuf};
 use std::sync::mpsc::{Receiver, Sender, channel};
 use std::sync::{Arc, Mutex};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 pub enum Cmd {
     Discover,
@@ -50,6 +50,8 @@ pub struct Shared {
     /// Whether the connected TV has Roku Media Player; `None` when its
     /// channel list is unavailable.
     pub media_player: Option<bool>,
+    /// Sleep timer: when the TV is to be turned off, and the minutes chosen.
+    pub sleep: Option<(Instant, u32)>,
 }
 
 #[derive(Clone)]
@@ -125,6 +127,11 @@ impl Core {
                 let _ = self.wake.send(Wake::Quit);
             }
         }
+    }
+
+    /// Turn the TV off in `minutes`; `None` cancels.
+    pub fn set_sleep(&self, minutes: Option<u32>) {
+        self.state.lock().unwrap().sleep = minutes.map(|m| (Instant::now() + Duration::from_secs(m as u64 * 60), m));
     }
 
     /// Share `folder` with Roku Media Player, replacing any earlier share,
@@ -228,6 +235,18 @@ impl Core {
         let mut last: Option<(String, ecp::Playing)> = None;
         loop {
             std::thread::sleep(Duration::from_secs(1));
+            let asleep = {
+                let mut st = self.state.lock().unwrap();
+                let due = st.sleep.is_some_and(|(at, _)| Instant::now() >= at);
+                if due {
+                    st.sleep = None;
+                }
+                due
+            };
+            if asleep {
+                self.key("PowerOff");
+                self.repaint();
+            }
             let Some(dev) = self.state.lock().unwrap().device.clone() else { continue };
             let Ok(now) = ecp::now_playing(&dev.host) else { continue };
             #[cfg(target_os = "linux")]
@@ -293,6 +312,15 @@ pub fn saved_appearance() -> (Option<String>, bool) {
 pub fn save_appearance(theme: &str, animate: bool) {
     save("theme", theme);
     save("animate", if animate { "on" } else { "off" });
+}
+
+/// Channels pinned to the top of the list, by id.
+pub fn saved_favorites() -> Vec<String> {
+    saved("favorites").map(|f| f.lines().map(|l| l.trim().to_string()).filter(|l| !l.is_empty()).collect()).unwrap_or_default()
+}
+
+pub fn save_favorites(ids: &[String]) {
+    save("favorites", &ids.join("\n"));
 }
 
 /// The folder shared last, if it still exists.

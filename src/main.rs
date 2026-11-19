@@ -35,6 +35,19 @@ fn centered_row(ui: &mut egui::Ui, total: f32, add: impl FnOnce(&mut egui::Ui)) 
 }
 
 const FLASH_SECS: f64 = 0.15;
+/// Keys that repeat while their button is held, after `HOLD_SECS`.
+const REPEATS: [&str; 8] = ["Up", "Down", "Left", "Right", "VolumeUp", "VolumeDown", "ChannelUp", "ChannelDown"];
+const HOLD_SECS: f64 = 0.5;
+const REPEAT_SECS: f64 = 0.15;
+/// Sleep timer choices, in minutes.
+const SLEEP_MINUTES: [u32; 3] = [30, 60, 90];
+
+/// A button being held down: when it next repeats, and whether it has yet.
+struct Hold {
+    key: &'static str,
+    next: f64,
+    repeated: bool,
+}
 
 struct Remote {
     core: Core,
@@ -55,6 +68,11 @@ struct Remote {
     busy: bool,
     /// Key last sent from the keyboard and when, so its button lights up.
     flash: Option<(&'static str, f64)>,
+    hold: Option<Hold>,
+    /// Narrows the channel list to names containing it.
+    filter: String,
+    /// Channels pinned to the top of the list, by id.
+    favorites: Vec<String>,
     /// The folder picker, while it's open.
     picking: Option<Receiver<Result<Option<PathBuf>, String>>>,
     share_help: bool,
@@ -95,6 +113,9 @@ impl Remote {
             error: false,
             busy: false,
             flash: None,
+            hold: None,
+            filter: String::new(),
+            favorites: core::saved_favorites(),
             picking: None,
             share_help: false,
             youtube_help: false,
@@ -126,6 +147,30 @@ impl Remote {
 
     fn key(&mut self, key: &'static str) {
         self.core.key(key);
+    }
+
+    /// A button's click, or its repeats while it's held down.
+    fn press(&mut self, ui: &egui::Ui, key: &'static str, clicked: bool, down: bool) {
+        if down && REPEATS.contains(&key) {
+            let now = ui.input(|i| i.time);
+            match &mut self.hold {
+                Some(h) if h.key == key => {
+                    if now >= h.next {
+                        self.core.key(key);
+                        h.next = now + REPEAT_SECS;
+                        h.repeated = true;
+                    }
+                }
+                _ => self.hold = Some(Hold { key, next: now + HOLD_SECS, repeated: false }),
+            }
+            ui.ctx().request_repaint();
+        } else if clicked {
+            // Letting go after repeats isn't one more press.
+            let repeated = self.hold.take().is_some_and(|h| h.key == key && h.repeated);
+            if !repeated {
+                self.key(key);
+            }
+        }
     }
 
     /// The window was reopened from the tray: catch up on what happened
@@ -188,8 +233,13 @@ impl Remote {
         while let Ok(ev) = self.rx.try_recv() {
             match ev {
                 Event::Found(devs) => {
-                    if self.device.is_none() {
-                        self.busy = false;
+                    self.busy = false;
+                    if self.device.is_some() {
+                        // A search from the refresh button, while connected.
+                        if !self.error {
+                            self.status.clear();
+                        }
+                    } else {
                         self.status = match devs.len() {
                             0 => "No Roku found. Choose “Enter IP address” in the device menu.".into(),
                             1 => String::new(),
@@ -269,6 +319,8 @@ impl Remote {
             (K::Equals, "VolumeUp"),
             (K::Minus, "VolumeDown"),
             (K::M, "VolumeMute"),
+            (K::PageUp, "ChannelUp"),
+            (K::PageDown, "ChannelDown"),
         ];
         let (pressed, now): (Vec<&'static str>, f64) =
             ui.input(|i| (map.iter().filter(|(k, _)| i.key_pressed(*k)).map(|(_, v)| *v).collect(), i.time));
@@ -406,9 +458,39 @@ impl Remote {
     fn icon_key(&mut self, ui: &mut egui::Ui, size: Vec2, icon: Icon, key: &'static str, tip: &str) {
         let tint = (key == "PowerToggle").then_some(look::POWER);
         let lit = self.lit(ui, key);
-        if look::icon_key(ui, size, icon, lit, tint).on_hover_text(tip).clicked() {
-            self.key(key);
-        }
+        let resp = look::icon_key(ui, size, icon, lit, tint).on_hover_text(tip);
+        self.press(ui, key, resp.clicked(), resp.is_pointer_button_down_on());
+    }
+
+    fn text_key(&mut self, ui: &mut egui::Ui, size: Vec2, label: &str, key: &'static str, tip: &str) {
+        let lit = self.lit(ui, key);
+        let resp = look::text_key(ui, size, label, lit).on_hover_text(tip);
+        self.press(ui, key, resp.clicked(), resp.is_pointer_button_down_on());
+    }
+
+    /// Turn the TV off after a while; pressing the lit choice cancels.
+    fn sleep_timer(&mut self, ui: &mut egui::Ui) {
+        let sleep = self.core.state.lock().unwrap().sleep;
+        let line = match sleep {
+            Some((at, _)) => {
+                // Count the minutes down without waiting for input.
+                ui.ctx().request_repaint_after(std::time::Duration::from_secs(5));
+                let left = at.saturating_duration_since(std::time::Instant::now()).as_secs().div_ceil(60);
+                format!("TV turns off in {left} min")
+            }
+            None => "Sleep timer".into(),
+        };
+        ui.vertical_centered(|ui| ui.label(egui::RichText::new(line).small().color(look::pal().weak)));
+        let (kw, gap) = (74.0, ui.spacing().item_spacing.x);
+        centered_row(ui, 3.0 * kw + 2.0 * gap, |ui| {
+            for minutes in SLEEP_MINUTES {
+                let on = sleep.is_some_and(|(_, m)| m == minutes);
+                let tip = if on { "Cancel the sleep timer".to_string() } else { format!("Turn the TV off in {minutes} minutes") };
+                if look::text_key(ui, vec2(kw, 30.0), &format!("{minutes} min"), on).on_hover_text(tip).clicked() {
+                    self.core.set_sleep((!on).then_some(minutes));
+                }
+            }
+        });
     }
 
     fn remote(&mut self, ui: &mut egui::Ui) {
@@ -436,10 +518,10 @@ impl Remote {
         ui.add_space(6.0);
         let d = (w - 40.0).clamp(180.0, 250.0);
         let lit = self.flash.filter(|_| ["Up", "Down", "Left", "Right", "Select"].iter().any(|k| self.lit(ui, k))).map(|(k, _)| k);
-        let mut pressed = None;
-        ui.vertical_centered(|ui| pressed = look::dpad(ui, d, lit));
-        if let Some(key) = pressed {
-            self.key(key);
+        let mut pad = (None, None);
+        ui.vertical_centered(|ui| pad = look::dpad(ui, d, lit));
+        if let Some(key) = pad.0.or(pad.1) {
+            self.press(ui, key, pad.0.is_some(), pad.1.is_some());
         }
         ui.add_space(6.0);
 
@@ -467,16 +549,43 @@ impl Remote {
                 self.icon_key(ui, vk, Icon::Mute, "VolumeMute", "Mute  (M)");
                 self.icon_key(ui, vk, Icon::VolUp, "VolumeUp", "Volume up  (+)");
             });
-            let inputs = [("HDMI 1", "InputHDMI1"), ("HDMI 2", "InputHDMI2"), ("HDMI 3", "InputHDMI3"), ("Antenna", "InputTuner")];
-            let iw = ((w - 3.0 * gap) / 4.0).min(74.0);
-            centered_row(ui, 4.0 * iw + 3.0 * gap, |ui| {
-                for (label, key) in inputs {
-                    let lit = self.lit(ui, key);
-                    if look::text_key(ui, vec2(iw, 30.0), label, lit).on_hover_text("Switch input").clicked() {
-                        self.key(key);
+            // Channel rocker, for the antenna.
+            centered_row(ui, 2.0 * vk.x + gap, |ui| {
+                self.text_key(ui, vec2(vk.x, 30.0), "CH −", "ChannelDown", "Channel down  (Page Down)");
+                self.text_key(ui, vec2(vk.x, 30.0), "CH +", "ChannelUp", "Channel up  (Page Up)");
+            });
+            let inputs = [
+                [("HDMI 1", "InputHDMI1"), ("HDMI 2", "InputHDMI2"), ("HDMI 3", "InputHDMI3")],
+                [("HDMI 4", "InputHDMI4"), ("AV", "InputAV1"), ("Antenna", "InputTuner")],
+            ];
+            let iw = ((w - 2.0 * gap) / 3.0).min(74.0);
+            for row in inputs {
+                centered_row(ui, 3.0 * iw + 2.0 * gap, |ui| {
+                    for (label, key) in row {
+                        self.text_key(ui, vec2(iw, 30.0), label, key, "Switch input");
                     }
+                });
+            }
+        }
+        let mut extras: Vec<(&str, &'static str, &str)> = Vec::new();
+        if is_tv {
+            extras.extend([("TV on", "PowerOn", "Turn the TV on"), ("TV off", "PowerOff", "Turn the TV off")]);
+        }
+        if self.device.as_ref().is_some_and(|d| d.find_remote) {
+            extras.push(("Find remote", "FindRemote", "Make the Roku remote beep so you can find it"));
+        }
+        if !extras.is_empty() {
+            let n = extras.len() as f32;
+            let ew = ((w - (n - 1.0) * gap) / n).min(92.0);
+            centered_row(ui, n * ew + (n - 1.0) * gap, |ui| {
+                for (label, key, tip) in extras {
+                    self.text_key(ui, vec2(ew, 30.0), label, key, tip);
                 }
             });
+        }
+        if is_tv {
+            ui.add_space(4.0);
+            self.sleep_timer(ui);
         }
     }
 
@@ -766,6 +875,9 @@ impl Remote {
                 Some(fw) => {
                     ui.add(egui::Label::new(egui::RichText::new(format!("{} is on. {}", fw.name, fw.fix)).small().color(look::WARN)).wrap());
                 }
+                None if !share::firewall_checkable() => {
+                    ui.add(egui::Label::new(weak("The Flatpak version can't check this computer's firewall. If one is on, let in TCP ports 8200–8209 and UDP port 1900.")).wrap());
+                }
                 None => {
                     ui.label(egui::RichText::new("No firewall found that would block the TV.").small().color(look::GOOD));
                 }
@@ -794,7 +906,14 @@ impl Remote {
     }
 
     fn channels(&mut self, ui: &mut egui::Ui) {
-        ui.label(egui::RichText::new("CHANNELS").small().strong().color(look::pal().weak));
+        ui.horizontal(|ui| {
+            ui.label(egui::RichText::new("CHANNELS").small().strong().color(look::pal().weak));
+            if !self.apps.is_empty() {
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    ui.add(egui::TextEdit::singleline(&mut self.filter).hint_text("Filter…").margin(egui::Margin::symmetric(8, 4)).desired_width(110.0));
+                });
+            }
+        });
         if self.apps.is_empty() {
             ui.add(
                 egui::Label::new(
@@ -809,19 +928,29 @@ impl Remote {
             );
             return;
         }
+        let needle = self.filter.trim().to_lowercase();
+        let mut shown: Vec<&ecp::App> = self.apps.iter().filter(|a| a.name.to_lowercase().contains(&needle)).collect();
+        if shown.is_empty() {
+            ui.label(egui::RichText::new("No channel has that in its name.").small().color(look::pal().weak));
+            return;
+        }
+        // Pinned channels first; the sort is stable, so the rest keep the TV's order.
+        shown.sort_by_key(|a| !self.favorites.contains(&a.id));
         let gap = 8.0;
         // Three across in a narrow window, more as it widens.
         let cols = (((ui.available_width() + gap) / (88.0 + gap)) as usize).clamp(3, 6);
         let tw = ((ui.available_width() - gap * (cols - 1) as f32) / cols as f32).floor();
         // Roku channel art is 290×218.
         let th = (tw * 218.0 / 290.0).round();
-        let mut launch = None;
+        let (mut launch, mut pin) = (None, None);
         ui.spacing_mut().item_spacing = vec2(gap, gap);
-        for row in self.apps.chunks(cols) {
+        for row in shown.chunks(cols) {
             ui.horizontal(|ui| {
                 for app in row {
                     let (rect, resp) = ui.allocate_exact_size(vec2(tw, th), egui::Sense::click());
-                    let resp = resp.on_hover_text(&app.name).on_hover_cursor(egui::CursorIcon::PointingHand);
+                    let pinned = self.favorites.contains(&app.id);
+                    let tip = format!("{}\nRight-click to {}", app.name, if pinned { "unpin" } else { "pin to the top" });
+                    let resp = resp.on_hover_text(tip).on_hover_cursor(egui::CursorIcon::PointingHand);
                     let p = ui.painter();
                     let hover = if look::animated() { ui.ctx().animate_bool_with_time(resp.id, resp.hovered(), 0.15) } else { resp.hovered() as u8 as f32 };
                     let lift = -3.0 * hover;
@@ -849,14 +978,29 @@ impl Remote {
                     if let Some(s) = ring {
                         ui.painter().rect_stroke(r, 10.0, s, egui::StrokeKind::Outside);
                     }
+                    if pinned {
+                        let at = r.right_top() + vec2(-12.0, 12.0);
+                        ui.painter().circle_filled(at, 9.0, egui::Color32::from_black_alpha(170));
+                        ui.painter().text(at, egui::Align2::CENTER_CENTER, "★", egui::FontId::proportional(12.0), look::WARN);
+                    }
                     if resp.clicked() {
                         launch = Some(app.id.clone());
+                    }
+                    if resp.secondary_clicked() {
+                        pin = Some(app.id.clone());
                     }
                 }
             });
         }
         if let (Some(id), Some(dev)) = (launch, &self.device) {
             let _ = self.core.cmd.send(Cmd::Launch(dev.host.clone(), id));
+        }
+        if let Some(id) = pin {
+            match self.favorites.iter().position(|f| *f == id) {
+                Some(i) => drop(self.favorites.remove(i)),
+                None => self.favorites.push(id),
+            }
+            core::save_favorites(&self.favorites);
         }
     }
 
@@ -997,7 +1141,11 @@ struct Window(Rc<RefCell<Remote>>);
 
 impl eframe::App for Window {
     fn ui(&mut self, ui: &mut egui::Ui, frame: &mut eframe::Frame) {
-        self.0.borrow_mut().ui(ui, frame);
+        let mut remote = self.0.borrow_mut();
+        remote.ui(ui, frame);
+        if !ui.input(|i| i.pointer.any_down()) {
+            remote.hold = None;
+        }
     }
 }
 
